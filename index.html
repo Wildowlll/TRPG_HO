@@ -218,17 +218,18 @@ textarea{resize:vertical;min-height:80px;}
 }
 .modal-card{
   background:linear-gradient(170deg,var(--paper),var(--paper-2));color:var(--text-on-paper);
-  border-radius:12px;max-width:520px;width:100%;padding:28px;position:relative;
+  border-radius:12px;max-width:520px;width:100%;max-height:85vh;padding:28px;position:relative;
   box-shadow:0 20px 60px #000000aa;
   animation:sealCrack .4s ease;
+  display:flex;flex-direction:column;
 }
 @keyframes sealCrack{
   0%{transform:scale(.85) rotate(-2deg);opacity:0;}
   60%{transform:scale(1.02) rotate(1deg);opacity:1;}
   100%{transform:scale(1) rotate(0);}
 }
-.modal-card h3{font-family:var(--font-display);font-size:20px;margin:0 0 12px;border-bottom:1px solid #00000022;padding-bottom:10px;}
-.modal-card .mbody{white-space:pre-wrap;line-height:1.65;font-size:15px;}
+.modal-card h3{font-family:var(--font-display);font-size:20px;margin:0 0 12px;border-bottom:1px solid #00000022;padding-bottom:10px;flex-shrink:0;}
+.modal-card .mbody{white-space:pre-wrap;line-height:1.65;font-size:15px;overflow-y:auto;flex:1;padding-right:4px;}
 .modal-card img{max-width:100%;border-radius:8px;margin-top:6px;}
 .modal-close{position:absolute;top:14px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-on-paper);opacity:.6;}
 .modal-close:hover{opacity:1;}
@@ -541,7 +542,42 @@ let roomName = '';
 
 /* ---------- rich text (표 붙여넣기) ---------- */
 const ALLOWED_TAGS=new Set(['B','STRONG','I','EM','U','P','DIV','BR','SPAN','TABLE','THEAD','TBODY','TR','TD','TH','UL','OL','LI','H1','H2','H3','A','IMG']);
-const ALLOWED_ATTRS={TABLE:['border','cellpadding','cellspacing'],TD:['colspan','rowspan'],TH:['colspan','rowspan'],A:['href'],IMG:['src','alt','data-file-id','data-draft-id']};
+const ALLOWED_ATTRS={
+  TABLE:['border','cellpadding','cellspacing','style'],
+  TR:['style'],
+  TD:['colspan','rowspan','style','align'],
+  TH:['colspan','rowspan','style','align'],
+  P:['style','align'],DIV:['style','align'],SPAN:['style'],
+  A:['href'],
+  IMG:['src','alt','data-file-id','data-draft-id']
+};
+const ALLOWED_STYLE_PROPS=['text-align','vertical-align','background-color','background','color','font-weight','font-style','text-decoration'];
+const ALLOWED_ALIGN_VALUES=['left','right','center','justify'];
+
+function sanitizeStyleValue(value){
+  const v=value.trim();
+  if(!v) return null;
+  if(/url\s*\(/i.test(v)) return null;
+  if(/expression\s*\(/i.test(v)) return null;
+  if(/javascript:/i.test(v)) return null;
+  if(v.length>100) return null;
+  return v;
+}
+
+function sanitizeStyleAttr(styleStr){
+  if(!styleStr) return '';
+  const kept=[];
+  styleStr.split(';').forEach(decl=>{
+    const idx=decl.indexOf(':');
+    if(idx===-1) return;
+    const prop=decl.slice(0,idx).trim().toLowerCase();
+    if(!ALLOWED_STYLE_PROPS.includes(prop)) return;
+    const val=sanitizeStyleValue(decl.slice(idx+1));
+    if(val===null) return;
+    kept.push(`${prop}:${val}`);
+  });
+  return kept.join(';');
+}
 
 function sanitizeHtml(html){
   const doc=new DOMParser().parseFromString(html,'text/html');
@@ -566,8 +602,20 @@ function sanitizeHtml(html){
         return;
       }
       [...child.attributes].forEach(attr=>{
-        const keep=(ALLOWED_ATTRS[child.tagName]||[]).includes(attr.name.toLowerCase());
-        if(!keep) child.removeAttribute(attr.name);
+        const attrName=attr.name.toLowerCase();
+        const allowed=(ALLOWED_ATTRS[child.tagName]||[]).includes(attrName);
+        if(!allowed){ child.removeAttribute(attr.name); return; }
+        if(attrName==='style'){
+          const cleaned=sanitizeStyleAttr(attr.value);
+          if(cleaned) child.setAttribute('style',cleaned);
+          else child.removeAttribute('style');
+          return;
+        }
+        if(attrName==='align'){
+          const val=attr.value.trim().toLowerCase();
+          if(ALLOWED_ALIGN_VALUES.includes(val)) child.setAttribute('align',val);
+          else child.removeAttribute('align');
+        }
       });
       if(child.tagName==='A'){
         const href=child.getAttribute('href')||'';
