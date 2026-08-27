@@ -425,10 +425,25 @@ textarea{resize:vertical;min-height:80px;}
       </div>
     </div>
 
-    <div class="panel">
-      <h2>📁 핸드아웃 보관함</h2>
-      <div class="lib-tree" id="libraryTree"></div>
-      <button class="icon-btn" onclick="createFolder()" style="margin-top:10px;">+ 새 폴더</button>
+    <div class="gm-columns">
+      <div class="panel">
+        <h2>📁 핸드아웃 보관함</h2>
+        <div class="lib-tree" id="libraryTree"></div>
+        <button class="icon-btn" onclick="createFolder()" style="margin-top:10px;">+ 새 폴더</button>
+      </div>
+
+      <div class="panel">
+        <h2>📬 선택해서 한번에 전달</h2>
+        <div id="bulkSendList" class="roster" style="margin-bottom:6px;"></div>
+        <div class="empty-note" id="bulkSendEmpty">보관함에 저장된 핸드아웃이 없어요.</div>
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-main);margin:0 0 8px;">
+            <input type="checkbox" id="bulkTargetAll" onchange="renderBulkSendTargetList()"> 전체 공개
+          </label>
+          <div class="roster" id="bulkTargetList" style="margin-bottom:10px;"></div>
+          <button class="btn btn-seal" style="width:100%;" onclick="sendBulkHandouts()">🕯️ 선택한 핸드아웃 전달</button>
+        </div>
+      </div>
     </div>
 
     <div class="gm-columns">
@@ -852,6 +867,44 @@ async function resolveDraftImagesForSend(html){
   return doc.body.innerHTML;
 }
 
+async function deliverLibraryItem(item,targets,allFlag){
+  const handoutId=uid();
+  const payloadBase={type:'handout',id:handoutId,title:item.title,kind:item.kind};
+  let logBody=null,logPreview=null,fileIdForLog=null;
+
+  if(item.kind==='text'){
+    const resolved=await resolveDraftImagesForSend(item.body||'');
+    payloadBase.body=resolved;
+    logBody=resolved;
+  } else {
+    const blob=await idbGetImage(item.draftImageId);
+    if(!blob){ toast(`"${item.title}" 이미지를 찾을 수 없어요`); return; }
+    const fileId=await uploadBlob(blob,item.draftImageId+'.png');
+    idbPutImage(fileId,blob).catch(()=>{});
+    payloadBase.fileId=fileId;
+    fileIdForLog=fileId;
+    try{ logPreview=await blobToDataUrl(blob); }catch(e){}
+  }
+
+  let onlineTargets=[],offlineTargets=[];
+  if(allFlag){
+    sendMsg(payloadBase);
+    onlineTargets=[...roster.entries()].filter(([id,p])=>p.online).map(([id])=>id);
+  } else {
+    targets.forEach(t=>{
+      if(roster.get(t)?.online){ sendMsg({...payloadBase,to:t}); onlineTargets.push(t); }
+      else{ offlineTargets.push(t); }
+    });
+  }
+
+  sentLog.unshift({
+    id:handoutId,title:item.title,kind:item.kind,ts:Date.now(),
+    targets: allFlag?onlineTargets:targets,
+    allFlag,seenBy:new Set(),body:logBody,previewUrl:logPreview,fileId:fileIdForLog,
+    pendingTargets:offlineTargets
+  });
+}
+
 async function sendDraftItem(itemId){
   const item=library.items.find(it=>it.id===itemId);
   if(!item) return;
@@ -863,35 +916,7 @@ async function sendDraftItem(itemId){
   }
 
   toast('전송 준비 중...');
-  const handoutId=uid();
-  const payloadBase={type:'handout',id:handoutId,title:item.title,kind:item.kind};
-  let logBody=null,logPreview=null,fileIdForLog=null;
-
-  if(item.kind==='text'){
-    const resolved=await resolveDraftImagesForSend(item.body||'');
-    payloadBase.body=resolved;
-    logBody=resolved;
-  } else {
-    const blob=await idbGetImage(item.draftImageId);
-    if(!blob){ toast('보관함 이미지를 찾을 수 없어요'); return; }
-    const fileId=await uploadBlob(blob,item.draftImageId+'.png');
-    idbPutImage(fileId,blob).catch(()=>{});
-    payloadBase.fileId=fileId;
-    fileIdForLog=fileId;
-    try{ logPreview=await blobToDataUrl(blob); }catch(e){}
-  }
-
-  if(allFlag){
-    sendMsg(payloadBase);
-  } else {
-    targets.forEach(t=>sendMsg({...payloadBase,to:t}));
-  }
-
-  sentLog.unshift({
-    id:handoutId,title:item.title,kind:item.kind,ts:Date.now(),
-    targets: allFlag ? [...roster.entries()].filter(([id,p])=>p.online).map(([id])=>id) : targets,
-    allFlag,seenBy:new Set(),body:logBody,previewUrl:logPreview,fileId:fileIdForLog
-  });
+  await deliverLibraryItem(item,targets,allFlag);
   sentLogPage=1;
   renderSentLog();
   saveGmState();
@@ -1092,6 +1117,61 @@ function renderLibrary(){
 
   wrap.innerHTML=(library.folders.length||unfiled.length ? unfiledBlock+folderBlocks : '<div class="empty-note">저장된 핸드아웃이 없어요. 오른쪽에서 작성한 뒤 "💾 보관함에 저장"을 눌러보세요.</div>');
   hydrateDraftPreviews(wrap);
+  renderBulkSendItemList();
+}
+
+/* ---------- GM: 여러 핸드아웃을 골라 한번에 전달 ---------- */
+function renderBulkSendItemList(){
+  const listWrap=document.getElementById('bulkSendList');
+  const empty=document.getElementById('bulkSendEmpty');
+  if(!listWrap) return;
+  if(empty) empty.style.display=library.items.length?'none':'block';
+  listWrap.innerHTML=library.items.map(it=>{
+    const folder=library.folders.find(f=>f.id===it.folderId);
+    const folderLabel=folder?`📁 ${escapeHtml(folder.name)}`:'🗂️ 미분류';
+    return `
+      <div class="roster-item">
+        <input type="checkbox" class="bulk-item-check" value="${it.id}">
+        <span style="font-size:14px;">${it.kind==='image'?'🖼️':'✍️'}</span>
+        <span class="rname">${escapeHtml(it.title)} <span style="color:var(--muted);font-size:10.5px;">(${folderLabel})</span></span>
+      </div>`;
+  }).join('');
+}
+
+function renderBulkSendTargetList(){
+  const allChecked=document.getElementById('bulkTargetAll')?.checked;
+  const targetWrap=document.getElementById('bulkTargetList');
+  if(targetWrap){
+    targetWrap.innerHTML=[...roster.entries()].map(([id,p])=>`
+      <div class="roster-item">
+        <input type="checkbox" class="bulk-target-check" value="${id}" ${allChecked?'checked disabled':''}>
+        <span class="status-dot ${p.online?'on':'off'}"></span>
+        <span class="rname">${escapeHtml(p.name)}${p.online?'':' <span style="color:var(--muted);font-size:11px;">(오프라인)</span>'}</span>
+      </div>`).join('') || '<div class="empty-note">참가한 조사원이 아직 없어요.</div>';
+  }
+}
+
+async function sendBulkHandouts(){
+  const itemIds=[...document.querySelectorAll('.bulk-item-check:checked')].map(c=>c.value);
+  if(itemIds.length===0){ toast('보낼 핸드아웃을 선택해주세요'); return; }
+  const allFlag=document.getElementById('bulkTargetAll')?.checked;
+  let targets=[];
+  if(!allFlag){
+    targets=[...document.querySelectorAll('.bulk-target-check:checked')].map(c=>c.value);
+    if(targets.length===0){ toast('받는 사람을 선택해주세요'); return; }
+  }
+
+  toast(`핸드아웃 ${itemIds.length}개 전송 준비 중...`);
+  for(const id of itemIds){
+    const item=library.items.find(it=>it.id===id);
+    if(!item) continue;
+    await deliverLibraryItem(item,targets,allFlag);
+  }
+  sentLogPage=1;
+  renderSentLog();
+  saveGmState();
+  document.querySelectorAll('.bulk-item-check:checked').forEach(c=>c.checked=false);
+  toast(`🕯️ 핸드아웃 ${itemIds.length}개를 전달했어요`);
 }
 
 /* ---------- 알림음 ---------- */
@@ -1454,6 +1534,17 @@ function handleMsg(msg){
       roomName=msg.name||'';
       recordRecentRoom(roomCode,'PL',roomName);
       renderPlRoomHeader();
+    } else if(msg.type==='recall'){
+      const idx=inbox.findIndex(h=>h.id===msg.id);
+      if(idx!==-1){
+        inbox.splice(idx,1);
+        renderInbox();
+        savePlInbox();
+        document.querySelectorAll('.modal-bg').forEach(bg=>{
+          if(bg.dataset.handoutId===msg.id) bg.remove();
+        });
+        toast('🚫 GM이 이 핸드아웃을 회수했어요');
+      }
     }
   }
 }
@@ -1611,7 +1702,8 @@ document.addEventListener('click',(ev)=>{
 /* ---------- GM: 재접속한 조사원에게 밀린 핸드아웃 자동 전달 ---------- */
 async function deliverPendingHandouts(peerId,peerName){
   const pendingItems=sentLog.filter(item=>item.pendingTargets&&item.pendingTargets.includes(peerId));
-  if(!pendingItems.length) return;
+  const recallItems=sentLog.filter(item=>item.pendingRecalls&&item.pendingRecalls.includes(peerId));
+  if(!pendingItems.length && !recallItems.length) return;
   let count=0;
   for(const item of pendingItems){
     const payloadBase={type:'handout',id:item.id,title:item.title,kind:item.kind};
@@ -1634,9 +1726,40 @@ async function deliverPendingHandouts(peerId,peerName){
     if(!item.targets.includes(peerId)) item.targets.push(peerId);
     count++;
   }
+  recallItems.forEach(item=>{
+    sendMsg({type:'recall',to:peerId,id:item.id});
+    item.pendingRecalls=item.pendingRecalls.filter(t=>t!==peerId);
+  });
   renderSentLog();
   saveGmState();
   if(count) toast(`📬 ${peerName} 님에게 밀린 핸드아웃 ${count}개를 자동으로 전달했어요`);
+}
+
+/* ---------- GM: 핸드아웃 회수 ---------- */
+function recallHandout(itemId){
+  const item=sentLog.find(s=>s.id===itemId);
+  if(!item) return;
+  const ok=confirm(`"${item.title}" 핸드아웃을 회수할까요?\n이미 열어본 사람에게는 내용을 다시 숨길 수 없지만, 아직 안 열어본 사람 화면에서는 사라져요.`);
+  if(!ok) return;
+
+  const pending=item.pendingTargets||[];
+  const delivered=item.targets.filter(t=>!pending.includes(t));
+
+  delivered.forEach(t=>{
+    if(roster.get(t)?.online){
+      sendMsg({type:'recall',to:t,id:item.id});
+    } else {
+      item.pendingRecalls=item.pendingRecalls||[];
+      if(!item.pendingRecalls.includes(t)) item.pendingRecalls.push(t);
+    }
+  });
+
+  item.pendingTargets=[]; // 아직 전달 안 된 건 그냥 취소
+  item.recalled=true;
+  item.recalledAt=Date.now();
+  renderSentLog();
+  saveGmState();
+  toast('🚫 핸드아웃을 회수했어요');
 }
 
 /* ---------- GM: roster render ---------- */
@@ -1661,6 +1784,8 @@ function renderRoster(){
       <span class="status-dot ${p.online?'on':'off'}"></span>
       <span class="rname">${escapeHtml(p.name)}${p.online?'':' <span style="color:var(--muted);font-size:11px;">(오프라인 · 재접속 시 자동 전달)</span>'}</span>
     </div>`).join('') || '<div class="empty-note">참가한 조사원이 아직 없어요.</div>';
+
+  renderBulkSendTargetList();
 }
 function toggleAllTargets(){renderRoster();}
 
@@ -1919,6 +2044,7 @@ function renderSentLog(){
       const isPicking=resendPickerFor===item.id;
       resendHtml=`<div style="margin-top:10px;">
         <button class="icon-btn" onclick="toggleResendPicker('${item.id}')">➕ 다른 사람에게 보내기</button>
+        ${!item.recalled?`<button class="icon-btn" style="color:#c0392b;" onclick="event.stopPropagation();recallHandout('${item.id}')">🚫 회수하기</button>`:''}
         ${isPicking?`
           <div class="roster" style="margin-top:8px;">
             ${candidates.length?candidates.map(([id,p])=>`
@@ -1933,7 +2059,7 @@ function renderSentLog(){
     }
     return `<div class="sent-item">
       <div class="st-clickable" onclick="toggleSentExpand('${item.id}')">
-        <div class="st-title">${item.kind==='image'?'🖼️':'✍️'} ${escapeHtml(item.title)} <span class="st-caret">${isOpen?'▲':'▼'}</span></div>
+        <div class="st-title">${item.kind==='image'?'🖼️':'✍️'} ${escapeHtml(item.title)}${item.recalled?' <span style="color:#c0392b;font-size:11px;">🚫 회수됨</span>':''} <span class="st-caret">${isOpen?'▲':'▼'}</span></div>
         <div class="st-meta">${item.allFlag?'전체 공개':`${names.length}명에게 전달`} · ${new Date(item.ts).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}</div>
       </div>
       ${contentHtml}
@@ -2027,6 +2153,7 @@ function openHandout(i){
 function showModal(h){
   const bg=document.createElement('div');
   bg.className='modal-bg';
+  bg.dataset.handoutId=h.id;
   bg.onclick=(e)=>{if(e.target===bg)bg.remove();};
   let bodyHtml='';
   if(h.kind==='text'){
