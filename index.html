@@ -458,7 +458,7 @@ textarea{resize:vertical;min-height:80px;}
       </div>
 
       <div id="composeTextWrap">
-        <div id="composeBody" class="rich-edit" contenteditable="true" data-placeholder="이 조사원만 보게 될 내용을 적어주세요... (워드 표도 그대로 복붙 가능해요)"></div>
+        <div id="composeBody" class="rich-edit" contenteditable="true" data-placeholder="내용을 적어주세요... (워드 표도 그대로 복붙 가능해요)"></div>
       </div>
       <div id="composeImageWrap" class="hidden">
         <div class="file-drop" id="fileDrop" onclick="document.getElementById('fileInput').click()">
@@ -478,8 +478,8 @@ textarea{resize:vertical;min-height:80px;}
       </div>
 
       <div class="row" style="margin-top:10px;">
-        <button class="btn btn-seal" style="flex:1;" onclick="sendHandout()">🕯️ 핸드아웃 보내기</button>
-        <button class="btn btn-ghost" onclick="saveComposeToLibrary()">💾 보관함에 저장</button>
+        <button class="btn btn-gold" style="flex:1;" onclick="saveComposeToLibrary()">💾 보관함에 저장</button>
+        <button class="btn btn-ghost" onclick="sendHandout()">🕯️ 바로 보내기</button>
       </div>
     </div>
 
@@ -1115,7 +1115,7 @@ function renderLibrary(){
       </div>`;
   }).join('');
 
-  wrap.innerHTML=(library.folders.length||unfiled.length ? unfiledBlock+folderBlocks : '<div class="empty-note">저장된 핸드아웃이 없어요. 오른쪽에서 작성한 뒤 "💾 보관함에 저장"을 눌러보세요.</div>');
+  wrap.innerHTML=(library.folders.length||unfiled.length ? unfiledBlock+folderBlocks : '<div class="empty-note">저장된 핸드아웃이 없어요. 아래에서 작성한 뒤 "💾 보관함에 저장"을 눌러보세요.</div>');
   hydrateDraftPreviews(wrap);
   renderBulkSendItemList();
 }
@@ -1408,7 +1408,7 @@ function renderRoomNameDisplay(){
 function startEditRoomName(){
   const el=document.getElementById('roomNameDisplay');
   if(!el) return;
-  el.innerHTML=`<input type="text" id="roomNameInput" value="${escapeHtml(roomName||'')}" placeholder="예: 녹색사회 3회차" style="font-family:var(--font-body);font-size:14px;padding:5px 8px;width:150px;" onkeydown="if(event.key==='Enter')confirmRoomName()"> <button class="icon-btn" style="padding:5px 9px;" onclick="confirmRoomName()">확인</button>`;
+  el.innerHTML=`<input type="text" id="roomNameInput" value="${escapeHtml(roomName||'')}" style="font-family:var(--font-body);font-size:14px;padding:5px 8px;width:150px;" onkeydown="if(event.key==='Enter')confirmRoomName()"> <button class="icon-btn" style="padding:5px 9px;" onclick="confirmRoomName()">확인</button>`;
   document.getElementById('roomNameInput').focus();
 }
 
