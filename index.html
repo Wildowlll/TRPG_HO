@@ -261,6 +261,8 @@ textarea{resize:vertical;min-height:80px;}
   padding:7px 12px;font-size:12.5px;cursor:pointer;font-family:var(--font-body);white-space:nowrap;
 }
 .icon-btn:hover{border-color:var(--gold);}
+.icon-btn:disabled{opacity:.35;cursor:not-allowed;}
+.icon-btn:disabled:hover{border-color:var(--border);}
 .icon-btn.active-folder{border-color:var(--gold);background:var(--input-bg);color:var(--gold);}
 
 /* ---- 보관함 트리 ---- */
@@ -469,6 +471,7 @@ textarea{resize:vertical;min-height:80px;}
       <h2>보낸 핸드아웃 기록</h2>
       <div id="sentLog"></div>
       <div class="empty-note" id="sentEmpty">아직 보낸 핸드아웃이 없어요.</div>
+      <div id="sentLogPagination" class="row" style="justify-content:center;margin-top:10px;gap:12px;"></div>
     </div>
     </div>
   </div>
@@ -528,6 +531,8 @@ let myName = null;
 let roster = new Map();  // peerId -> {name, online, joinedAt}
 let sentLog = [];        // GM: {id, title, kind, ts, targets:[peerId..], allFlag, seenBy:Set, body, previewUrl}
 let expandedSent = new Set(); // 펼쳐진 보낸 핸드아웃 id
+let sentLogPage = 1;
+const SENT_LOG_PAGE_SIZE = 8;
 let library = {folders:[], items:[]}; // 핸드아웃 보관함 (전역, 방 코드와 무관)
 let collapsedFolders = new Set(); // 접힌 폴더 id
 let expandedLibraryItems = new Set(); // 펼쳐진 보관함 항목 id
@@ -885,6 +890,7 @@ async function sendDraftItem(itemId){
     targets: allFlag ? [...roster.entries()].filter(([id,p])=>p.online).map(([id])=>id) : targets,
     allFlag,seenBy:new Set(),body:logBody,previewUrl:logPreview,fileId:fileIdForLog
   });
+  sentLogPage=1;
   renderSentLog();
   saveGmState();
   expandedLibraryItems.delete(itemId);
@@ -1575,6 +1581,7 @@ function loadGmState(code){
     const data=JSON.parse(raw);
     (data.roster||[]).forEach(p=>roster.set(p.id,{name:p.name,online:false,joinedAt:0}));
     sentLog=(data.sentLog||[]).map(item=>({...item,seenBy:new Set(item.seenBy||[])}));
+    sentLogPage=1;
     renderRoster();
     renderSentLog();
     if(sentLog.length) toast(`이전 방 기록을 불러왔어요 (핸드아웃 ${sentLog.length}개)`);
@@ -1751,6 +1758,7 @@ async function sendHandout(){
     fileId: payloadBase.kind==='image' ? payloadBase.fileId : undefined,
     pendingTargets: offlineTargets
   });
+  sentLogPage=1;
   renderSentLog();
   saveGmState();
   if(offlineTargets.length){
@@ -1871,7 +1879,14 @@ async function doResend(itemId){
 function renderSentLog(){
   const el=document.getElementById('sentLog');
   document.getElementById('sentEmpty').style.display=sentLog.length?'none':'block';
-  el.innerHTML=sentLog.map(item=>{
+
+  const totalPages=Math.max(1,Math.ceil(sentLog.length/SENT_LOG_PAGE_SIZE));
+  if(sentLogPage>totalPages) sentLogPage=totalPages;
+  if(sentLogPage<1) sentLogPage=1;
+  const startIdx=(sentLogPage-1)*SENT_LOG_PAGE_SIZE;
+  const pageItems=sentLog.slice(startIdx,startIdx+SENT_LOG_PAGE_SIZE);
+
+  el.innerHTML=pageItems.map(item=>{
     const names=item.targets.map(id=>roster.get(id)?.name||'(알수없음)');
     const seenChips=item.targets.map(id=>{
       const seen=item.seenBy.has(id);
@@ -1920,6 +1935,23 @@ function renderSentLog(){
     </div>`;
   }).join('');
   hydrateImages(el);
+  renderSentLogPagination(totalPages);
+}
+
+function renderSentLogPagination(totalPages){
+  const wrap=document.getElementById('sentLogPagination');
+  if(!wrap) return;
+  if(totalPages<=1){ wrap.innerHTML=''; return; }
+  wrap.innerHTML=`
+    <button class="icon-btn" ${sentLogPage<=1?'disabled':''} onclick="goSentLogPage(${sentLogPage-1})">‹ 이전</button>
+    <span style="font-size:12px;color:var(--muted);font-family:var(--font-mono);">${sentLogPage} / ${totalPages} 페이지</span>
+    <button class="icon-btn" ${sentLogPage>=totalPages?'disabled':''} onclick="goSentLogPage(${sentLogPage+1})">다음 ›</button>
+  `;
+}
+
+function goSentLogPage(p){
+  sentLogPage=p;
+  renderSentLog();
 }
 
 /* ---------- GM: room info ---------- */
