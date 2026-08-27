@@ -1028,6 +1028,9 @@ function renderDraftTargetPicker(itemId){
 
 function renderLibItem(it){
   const isOpen=expandedLibraryItems.has(it.id);
+  const iconHtml = it.kind==='image'
+    ? `<img data-draft-id="${it.draftImageId}" style="width:26px;height:26px;object-fit:cover;border-radius:5px;flex-shrink:0;background:#00000020;">`
+    : `<span style="font-size:15px;flex-shrink:0;">✍️</span>`;
   let contentHtml='';
   if(isOpen){
     if(it.kind==='image'){
@@ -1039,7 +1042,7 @@ function renderLibItem(it){
   return `
     <div class="lib-item" draggable="true" ondragstart="onItemDragStart(event,'${it.id}')">
       <div class="lib-item-row" onclick="toggleLibraryItemExpand('${it.id}')">
-        <span style="font-size:15px;">${it.kind==='image'?'🖼️':'✍️'}</span>
+        ${iconHtml}
         <span class="rname">${escapeHtml(it.title)}</span>
         <span class="st-caret">${isOpen?'▲':'▼'}</span>
       </div>
