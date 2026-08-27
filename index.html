@@ -1702,30 +1702,43 @@ document.addEventListener('click',(ev)=>{
 });
 
 /* ---------- GM: 재접속한 조사원에게 밀린 핸드아웃 자동 전달 ---------- */
+async function buildHandoutPayload(item){
+  const payloadBase={type:'handout',id:item.id,title:item.title,kind:item.kind};
+  if(item.kind==='text'){
+    payloadBase.body=item.body;
+  } else {
+    // 이미지는 서버 파일이 만료됐을 수 있으니 캐시에서 다시 올려서 최신 링크로
+    try{
+      const cachedBlob=await idbGetImage(item.fileId);
+      if(cachedBlob){
+        const freshFileId=await uploadBlob(cachedBlob,`redeliver-${Date.now()}.png`);
+        idbPutImage(freshFileId,cachedBlob).catch(()=>{});
+        item.fileId=freshFileId;
+      }
+    }catch(e){}
+    payloadBase.fileId=item.fileId;
+  }
+  return payloadBase;
+}
+
 async function deliverPendingHandouts(peerId,peerName){
   const pendingItems=sentLog.filter(item=>item.pendingTargets&&item.pendingTargets.includes(peerId));
   const recallItems=sentLog.filter(item=>item.pendingRecalls&&item.pendingRecalls.includes(peerId));
-  if(!pendingItems.length && !recallItems.length) return;
+  // 전체공개로 보냈지만 그때 접속 전이라 못 받은 핸드아웃도 챙겨줌 (회수된 건 제외)
+  const missedBroadcasts=sentLog.filter(item=>item.allFlag && !item.recalled && !item.targets.includes(peerId));
+  if(!pendingItems.length && !recallItems.length && !missedBroadcasts.length) return;
   let count=0;
   for(const item of pendingItems){
-    const payloadBase={type:'handout',id:item.id,title:item.title,kind:item.kind};
-    if(item.kind==='text'){
-      payloadBase.body=item.body;
-    } else {
-      // 이미지는 서버 파일이 만료됐을 수 있으니 캐시에서 다시 올려서 최신 링크로
-      try{
-        const cachedBlob=await idbGetImage(item.fileId);
-        if(cachedBlob){
-          const freshFileId=await uploadBlob(cachedBlob,`redeliver-${Date.now()}.png`);
-          idbPutImage(freshFileId,cachedBlob).catch(()=>{});
-          item.fileId=freshFileId;
-        }
-      }catch(e){}
-      payloadBase.fileId=item.fileId;
-    }
+    const payloadBase=await buildHandoutPayload(item);
     sendMsg({...payloadBase,to:peerId});
     item.pendingTargets=item.pendingTargets.filter(t=>t!==peerId);
     if(!item.targets.includes(peerId)) item.targets.push(peerId);
+    count++;
+  }
+  for(const item of missedBroadcasts){
+    const payloadBase=await buildHandoutPayload(item);
+    sendMsg({...payloadBase,to:peerId});
+    item.targets.push(peerId);
     count++;
   }
   recallItems.forEach(item=>{
