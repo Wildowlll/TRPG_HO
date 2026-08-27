@@ -1419,6 +1419,7 @@ function handleMsg(msg){
       saveGmState();
       if(roomName) sendMsg({type:'room-name',to:msg.from,name:roomName});
       toast(`${msg.name} 님이 참가했어요`);
+      deliverPendingHandouts(msg.from,msg.name);
     } else if(msg.type==='peer-leave'){
       const p=roster.get(msg.peerId);
       if(p){p.online=false;renderRoster();saveGmState();}
@@ -1595,6 +1596,37 @@ document.addEventListener('click',(ev)=>{
   }
 });
 
+/* ---------- GM: 재접속한 조사원에게 밀린 핸드아웃 자동 전달 ---------- */
+async function deliverPendingHandouts(peerId,peerName){
+  const pendingItems=sentLog.filter(item=>item.pendingTargets&&item.pendingTargets.includes(peerId));
+  if(!pendingItems.length) return;
+  let count=0;
+  for(const item of pendingItems){
+    const payloadBase={type:'handout',id:item.id,title:item.title,kind:item.kind};
+    if(item.kind==='text'){
+      payloadBase.body=item.body;
+    } else {
+      // 이미지는 서버 파일이 만료됐을 수 있으니 캐시에서 다시 올려서 최신 링크로
+      try{
+        const cachedBlob=await idbGetImage(item.fileId);
+        if(cachedBlob){
+          const freshFileId=await uploadBlob(cachedBlob,`redeliver-${Date.now()}.png`);
+          idbPutImage(freshFileId,cachedBlob).catch(()=>{});
+          item.fileId=freshFileId;
+        }
+      }catch(e){}
+      payloadBase.fileId=item.fileId;
+    }
+    sendMsg({...payloadBase,to:peerId});
+    item.pendingTargets=item.pendingTargets.filter(t=>t!==peerId);
+    if(!item.targets.includes(peerId)) item.targets.push(peerId);
+    count++;
+  }
+  renderSentLog();
+  saveGmState();
+  if(count) toast(`📬 ${peerName} 님에게 밀린 핸드아웃 ${count}개를 자동으로 전달했어요`);
+}
+
 /* ---------- GM: roster render ---------- */
 function renderRoster(){
   const list=document.getElementById('rosterList');
@@ -1611,11 +1643,12 @@ function renderRoster(){
     </div>`).join('');
 
   const allChecked=document.getElementById('targetAll').checked;
-  targetList.innerHTML=[...roster.entries()].filter(([id,p])=>p.online).map(([id,p])=>`
+  targetList.innerHTML=[...roster.entries()].map(([id,p])=>`
     <div class="roster-item">
       <input type="checkbox" class="target-check" value="${id}" ${allChecked?'checked disabled':''}>
-      <span class="rname">${escapeHtml(p.name)}</span>
-    </div>`).join('') || '<div class="empty-note">접속 중인 조사원이 없어요.</div>';
+      <span class="status-dot ${p.online?'on':'off'}"></span>
+      <span class="rname">${escapeHtml(p.name)}${p.online?'':' <span style="color:var(--muted);font-size:11px;">(오프라인 · 재접속 시 자동 전달)</span>'}</span>
+    </div>`).join('') || '<div class="empty-note">참가한 조사원이 아직 없어요.</div>';
 }
 function toggleAllTargets(){renderRoster();}
 
@@ -1700,21 +1733,32 @@ async function sendHandout(){
     }
   }
 
+  let onlineTargets=[],offlineTargets=[];
   if(allFlag){
     sendMsg(payloadBase); // to 없이 브로드캐스트 -> 접속중인 모든 PL에게
+    onlineTargets=[...roster.entries()].filter(([id,p])=>p.online).map(([id])=>id);
   } else {
-    targets.forEach(t=>sendMsg({...payloadBase,to:t}));
+    targets.forEach(t=>{
+      if(roster.get(t)?.online){ sendMsg({...payloadBase,to:t}); onlineTargets.push(t); }
+      else{ offlineTargets.push(t); }
+    });
   }
 
   sentLog.unshift({
     id:handoutId,title,kind:payloadBase.kind,ts:Date.now(),
-    targets: allFlag ? [...roster.entries()].filter(([id,p])=>p.online).map(([id])=>id) : targets,
+    targets: allFlag ? onlineTargets : targets,
     allFlag, seenBy:new Set(), body:logBody, previewUrl:logPreview,
-    fileId: payloadBase.kind==='image' ? payloadBase.fileId : undefined
+    fileId: payloadBase.kind==='image' ? payloadBase.fileId : undefined,
+    pendingTargets: offlineTargets
   });
   renderSentLog();
   saveGmState();
-  toast('🕯️ 핸드아웃을 보냈어요');
+  if(offlineTargets.length){
+    const names=offlineTargets.map(id=>roster.get(id)?.name||'?').join(', ');
+    toast(`🕯️ 보냈어요 — ${names} 님은 오프라인이라 재접속하면 자동 전달돼요`);
+  } else {
+    toast('🕯️ 핸드아웃을 보냈어요');
+  }
   resetComposeForm();
 }
 
@@ -1831,8 +1875,10 @@ function renderSentLog(){
     const names=item.targets.map(id=>roster.get(id)?.name||'(알수없음)');
     const seenChips=item.targets.map(id=>{
       const seen=item.seenBy.has(id);
+      const isPending=(item.pendingTargets||[]).includes(id);
       const nm=roster.get(id)?.name||'?';
-      return `<span class="seen-chip ${seen?'':'pending'}">${escapeHtml(nm)} ${seen?'✓ 확인':'대기중'}</span>`;
+      const label=seen?'✓ 확인':(isPending?'📴 오프라인 대기':'대기중');
+      return `<span class="seen-chip ${seen?'':'pending'}">${escapeHtml(nm)} ${label}</span>`;
     }).join('');
     const isOpen=expandedSent.has(item.id);
     let contentHtml='';
