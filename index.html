@@ -106,13 +106,12 @@ textarea{resize:vertical;min-height:80px;}
   border-collapse:collapse;width:100%;margin:8px 0;font-size:13px;
 }
 .rich-edit td,.rich-edit th,.mbody td,.mbody th,.sent-content td,.sent-content th{
-  border:1px solid #7a6f4a55;padding:6px 9px;text-align:left;
+  border:1px solid transparent;padding:6px 9px;text-align:left;
 }
-.sent-content table td,.sent-content table th,.mbody table td,.mbody table th{border-color:#00000030;}
 .rich-edit th,.mbody th,.sent-content th{background:#ffffff10;font-weight:700;}
 .sent-content th,.mbody th{background:#00000010;}
 .rich-edit img,.mbody img,.sent-content img{max-width:100%;border-radius:6px;display:block;margin:4px 0;}
-.rich-edit td img,.mbody td img,.sent-content td img{max-width:140px;}
+.rich-edit td img,.mbody td img,.sent-content td img{width:100%;max-width:100%;border-radius:0;margin:0;}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
 .btn{
   border:none;border-radius:8px;padding:10px 18px;font-size:14px;font-weight:600;
@@ -262,6 +261,32 @@ textarea{resize:vertical;min-height:80px;}
 }
 .icon-btn:hover{border-color:var(--gold);}
 .icon-btn.active-folder{border-color:var(--gold);background:var(--input-bg);color:var(--gold);}
+
+/* ---- 보관함 트리 ---- */
+.lib-tree{display:flex;flex-direction:column;gap:10px;}
+.lib-folder{
+  background:var(--input-bg);border:1px solid var(--border);border-radius:10px;
+  padding:4px;transition:border-color .12s,background .12s;
+}
+.lib-folder.drag-over{border-color:var(--gold);background:var(--gold-soft);}
+.lib-folder-header{
+  display:flex;align-items:center;gap:8px;padding:8px 8px;cursor:pointer;border-radius:8px;
+}
+.lib-folder-header:hover{background:#ffffff08;}
+.lib-caret{font-size:10px;color:var(--muted);width:10px;flex-shrink:0;}
+.lib-folder-name{font-weight:600;font-size:13.5px;flex:1;}
+.lib-folder-count{font-size:11px;color:var(--muted);font-family:var(--font-mono);}
+.lib-folder-actions{display:flex;gap:6px;font-size:12px;opacity:.7;}
+.lib-folder-actions span{cursor:pointer;padding:2px;}
+.lib-folder-actions span:hover{opacity:1;}
+.lib-folder-body{padding:2px 6px 6px 22px;display:flex;flex-direction:column;gap:6px;}
+.lib-item{
+  background:var(--panel-b);border:1px solid var(--border);border-radius:8px;padding:8px 10px;cursor:grab;
+}
+.lib-item:active{cursor:grabbing;}
+.lib-item-row{display:flex;align-items:center;gap:8px;cursor:pointer;}
+.lib-unfiled .lib-folder-header{cursor:default;}
+.lib-unfiled .lib-folder-header:hover{background:none;}
 .dropdown-wrap{position:relative;}
 .dropdown-toggle{
   background:var(--input-bg);border:1px solid var(--border);color:var(--text-main);border-radius:8px;
@@ -382,7 +407,6 @@ textarea{resize:vertical;min-height:80px;}
           <div class="topbar-code" id="gmCodeDisplay" style="font-size:15px;">------</div>
         </div>
         <button class="icon-btn" onclick="copyJoinLink()" title="코드가 자동 입력된 참가 링크를 복사해요">🔗 링크 복사</button>
-        <button class="icon-btn" onclick="copyJoinCode()">코드 복사</button>
       </div>
       <div class="topbar-right">
         <div class="dropdown-wrap">
@@ -399,9 +423,8 @@ textarea{resize:vertical;min-height:80px;}
 
     <div class="panel">
       <h2>📁 핸드아웃 보관함</h2>
-      <div class="row" style="margin-bottom:12px;" id="folderTabs"></div>
-      <div class="roster" id="libraryItems"></div>
-      <div class="empty-note" id="libraryEmpty">저장된 핸드아웃이 없어요. 오른쪽에서 작성한 뒤 "💾 보관함에 저장"을 눌러보세요.</div>
+      <div class="lib-tree" id="libraryTree"></div>
+      <button class="icon-btn" onclick="createFolder()" style="margin-top:10px;">+ 새 폴더</button>
     </div>
 
     <div class="gm-columns">
@@ -505,7 +528,9 @@ let roster = new Map();  // peerId -> {name, online, joinedAt}
 let sentLog = [];        // GM: {id, title, kind, ts, targets:[peerId..], allFlag, seenBy:Set, body, previewUrl}
 let expandedSent = new Set(); // 펼쳐진 보낸 핸드아웃 id
 let library = {folders:[], items:[]}; // 핸드아웃 보관함 (전역, 방 코드와 무관)
-let currentFolderId = null; // null이면 전체 보기
+let collapsedFolders = new Set(); // 접힌 폴더 id
+let expandedLibraryItems = new Set(); // 펼쳐진 보관함 항목 id
+let draggedItemId = null;
 let resendPickerFor = null;   // 재전송 대상 선택 중인 핸드아웃 id
 let inbox = [];          // PL: {id, title, kind, body, fileId, ts, opened}
 let composeType = 'text';
@@ -714,7 +739,6 @@ function createFolder(){
   const folder={id:uid(),name:name.trim(),createdAt:Date.now()};
   library.folders.push(folder);
   saveLibrary();
-  currentFolderId=folder.id;
   renderLibrary();
 }
 
@@ -748,14 +772,124 @@ async function deleteFolder(folderId){
   }
   library.items=library.items.filter(it=>it.folderId!==folderId);
   library.folders=library.folders.filter(f=>f.id!==folderId);
-  if(currentFolderId===folderId) currentFolderId=null;
+  collapsedFolders.delete(folderId);
   saveLibrary();
   renderLibrary();
 }
 
-function selectFolder(id){
-  currentFolderId=id;
+async function resolveDraftImagesForSend(html){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const imgs=[...doc.querySelectorAll('img[data-draft-id]')];
+  for(const img of imgs){
+    const draftId=img.getAttribute('data-draft-id');
+    try{
+      const blob=await idbGetImage(draftId);
+      if(!blob){ img.replaceWith(doc.createTextNode('[이미지를 찾을 수 없어요]')); continue; }
+      const fileId=await uploadBlob(blob,draftId+'.png');
+      idbPutImage(fileId,blob).catch(()=>{});
+      img.src=`${HTTP_BASE}/file/${fileId}`;
+      img.setAttribute('data-file-id',fileId);
+      img.removeAttribute('data-draft-id');
+    }catch(e){
+      img.replaceWith(doc.createTextNode('[이미지 업로드 실패]'));
+    }
+  }
+  return doc.body.innerHTML;
+}
+
+async function sendDraftItem(itemId){
+  const item=library.items.find(it=>it.id===itemId);
+  if(!item) return;
+  const allFlag=document.getElementById(`draftTargetAll-${itemId}`)?.checked;
+  let targets=[];
+  if(!allFlag){
+    targets=[...document.querySelectorAll(`.draft-target-check[data-draft-item="${itemId}"]:checked`)].map(c=>c.value);
+    if(targets.length===0){toast('받는 사람을 선택해주세요');return;}
+  }
+
+  toast('전송 준비 중...');
+  const handoutId=uid();
+  const payloadBase={type:'handout',id:handoutId,title:item.title,kind:item.kind};
+  let logBody=null,logPreview=null,fileIdForLog=null;
+
+  if(item.kind==='text'){
+    const resolved=await resolveDraftImagesForSend(item.body||'');
+    payloadBase.body=resolved;
+    logBody=resolved;
+  } else {
+    const blob=await idbGetImage(item.draftImageId);
+    if(!blob){ toast('보관함 이미지를 찾을 수 없어요'); return; }
+    const fileId=await uploadBlob(blob,item.draftImageId+'.png');
+    idbPutImage(fileId,blob).catch(()=>{});
+    payloadBase.fileId=fileId;
+    fileIdForLog=fileId;
+    try{ logPreview=await blobToDataUrl(blob); }catch(e){}
+  }
+
+  if(allFlag){
+    sendMsg(payloadBase);
+  } else {
+    targets.forEach(t=>sendMsg({...payloadBase,to:t}));
+  }
+
+  sentLog.unshift({
+    id:handoutId,title:item.title,kind:item.kind,ts:Date.now(),
+    targets: allFlag ? [...roster.entries()].filter(([id,p])=>p.online).map(([id])=>id) : targets,
+    allFlag,seenBy:new Set(),body:logBody,previewUrl:logPreview,fileId:fileIdForLog
+  });
+  renderSentLog();
+  saveGmState();
+  expandedLibraryItems.delete(itemId);
   renderLibrary();
+  toast('🕯️ 보관함에서 바로 보냈어요');
+}
+
+function toggleLibraryItemExpand(id){
+  if(expandedLibraryItems.has(id)) expandedLibraryItems.delete(id);
+  else expandedLibraryItems.add(id);
+  renderLibrary();
+}
+
+function toggleFolderCollapse(folderId){
+  if(collapsedFolders.has(folderId)) collapsedFolders.delete(folderId);
+  else collapsedFolders.add(folderId);
+  renderLibrary();
+}
+
+async function hydrateDraftPreviews(container){
+  const imgs=[...container.querySelectorAll('img[data-draft-id]')];
+  for(const img of imgs){
+    const draftId=img.dataset.draftId;
+    try{
+      const blob=await idbGetImage(draftId);
+      if(blob) img.src=URL.createObjectURL(blob);
+      else img.replaceWith(document.createTextNode('[이미지를 찾을 수 없어요]'));
+    }catch(e){
+      img.replaceWith(document.createTextNode('[이미지를 불러올 수 없어요]'));
+    }
+  }
+}
+
+/* ---------- 보관함: 드래그 앤 드롭 ---------- */
+function onItemDragStart(ev,itemId){
+  draggedItemId=itemId;
+  ev.dataTransfer.effectAllowed='move';
+  try{ ev.dataTransfer.setData('text/plain',itemId); }catch(e){}
+}
+function onFolderDragEnter(ev){ ev.currentTarget.classList.add('drag-over'); }
+function onFolderDragLeave(ev){ ev.currentTarget.classList.remove('drag-over'); }
+function onDropToFolder(ev,folderId){
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  const itemId=draggedItemId||ev.dataTransfer.getData('text/plain');
+  draggedItemId=null;
+  if(!itemId) return;
+  const item=library.items.find(it=>it.id===itemId);
+  if(!item||item.folderId===folderId) return;
+  item.folderId=folderId;
+  saveLibrary();
+  renderLibrary();
+  toast(folderId?'폴더로 옮겼어요':'미분류로 옮겼어요');
 }
 
 function blobToDataUrl(blob){
@@ -820,31 +954,116 @@ async function deleteDraftItem(itemId){
   toast('보관함에서 삭제했어요');
 }
 
-function renderFolderTabs(){
-  const wrap=document.getElementById('folderTabs');
-  if(!wrap) return;
-  wrap.innerHTML=`<button class="icon-btn ${currentFolderId===null?'active-folder':''}" onclick="selectFolder(null)">전체</button>`+
-    library.folders.map(f=>`
-      <button class="icon-btn ${currentFolderId===f.id?'active-folder':''}" onclick="selectFolder('${f.id}')" oncontextmenu="event.preventDefault();renameFolder('${f.id}')">
-        📁 ${escapeHtml(f.name)} <span style="opacity:.55;" onclick="event.stopPropagation();deleteFolder('${f.id}')">✕</span>
-      </button>`).join('')+
-    `<button class="icon-btn" onclick="createFolder()">+ 새 폴더</button>`;
+function renderDraftTargetPicker(itemId){
+  const online=[...roster.entries()].filter(([id,p])=>p.online);
+  return `
+    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-main);margin:0 0 6px;">
+        <input type="checkbox" id="draftTargetAll-${itemId}"> 전체 공개
+      </label>
+      <div class="roster" style="margin-bottom:8px;">
+        ${online.length?online.map(([id,p])=>`
+          <div class="roster-item">
+            <input type="checkbox" class="draft-target-check" data-draft-item="${itemId}" value="${id}">
+            <span class="rname">${escapeHtml(p.name)}</span>
+          </div>`).join(''):'<div class="empty-note" style="padding:4px 0;">접속 중인 조사원이 없어요.</div>'}
+      </div>
+      <button class="btn btn-seal" style="width:100%;" onclick="event.stopPropagation();sendDraftItem('${itemId}')">🕯️ 받는 사람에게 바로 보내기</button>
+    </div>`;
+}
+
+function renderLibItem(it){
+  const isOpen=expandedLibraryItems.has(it.id);
+  let contentHtml='';
+  if(isOpen){
+    if(it.kind==='image'){
+      contentHtml=`<div class="sent-content"><img data-draft-id="${it.draftImageId}" style="max-width:100%;border-radius:8px;min-height:30px;"></div>`;
+    } else {
+      contentHtml=`<div class="sent-content">${sanitizeHtml(it.body||'')}</div>`;
+    }
+  }
+  return `
+    <div class="lib-item" draggable="true" ondragstart="onItemDragStart(event,'${it.id}')">
+      <div class="lib-item-row" onclick="toggleLibraryItemExpand('${it.id}')">
+        <span style="font-size:15px;">${it.kind==='image'?'🖼️':'✍️'}</span>
+        <span class="rname">${escapeHtml(it.title)}</span>
+        <span class="st-caret">${isOpen?'▲':'▼'}</span>
+      </div>
+      ${contentHtml}
+      ${isOpen?`<div class="row" style="margin-top:6px;">
+        <button class="icon-btn" style="padding:4px 8px;font-size:11.5px;" onclick="event.stopPropagation();loadDraftIntoCompose('${it.id}')">📥 작성칸에 불러오기</button>
+        <button class="icon-btn" style="padding:4px 8px;font-size:11.5px;" onclick="event.stopPropagation();deleteDraftItem('${it.id}')">🗑️ 삭제</button>
+      </div>
+      ${renderDraftTargetPicker(it.id)}`:''}
+    </div>`;
 }
 
 function renderLibrary(){
-  renderFolderTabs();
-  const itemsToShow=currentFolderId===null?library.items:library.items.filter(it=>it.folderId===currentFolderId);
-  const wrap=document.getElementById('libraryItems');
-  const empty=document.getElementById('libraryEmpty');
+  const wrap=document.getElementById('libraryTree');
   if(!wrap) return;
-  if(empty) empty.style.display=itemsToShow.length?'none':'block';
-  wrap.innerHTML=itemsToShow.map(it=>`
-    <div class="roster-item">
-      <span style="font-size:16px;">${it.kind==='image'?'🖼️':'✍️'}</span>
-      <span class="rname">${escapeHtml(it.title)}</span>
-      <button class="icon-btn" style="padding:5px 9px;" onclick="loadDraftIntoCompose('${it.id}')">📥 불러오기</button>
-      <button class="icon-btn" style="padding:5px 9px;" onclick="deleteDraftItem('${it.id}')">🗑️</button>
-    </div>`).join('');
+
+  const unfiled=library.items.filter(it=>!it.folderId);
+  const unfiledBlock=`
+    <div class="lib-folder lib-unfiled" ondragover="event.preventDefault()" ondragenter="onFolderDragEnter(event)" ondragleave="onFolderDragLeave(event)" ondrop="onDropToFolder(event,null)">
+      <div class="lib-folder-header">
+        <span class="lib-caret">▾</span>
+        <span class="lib-folder-name">🗂️ 미분류</span>
+        <span class="lib-folder-count">${unfiled.length}</span>
+      </div>
+      <div class="lib-folder-body">${unfiled.length?unfiled.map(renderLibItem).join(''):'<div class="empty-note" style="padding:6px 0;">여기로 항목을 끌어다 놓으면 폴더에서 빠져요.</div>'}</div>
+    </div>`;
+
+  const folderBlocks=library.folders.map(f=>{
+    const items=library.items.filter(it=>it.folderId===f.id);
+    const isOpen=!collapsedFolders.has(f.id);
+    return `
+      <div class="lib-folder" ondragover="event.preventDefault()" ondragenter="onFolderDragEnter(event)" ondragleave="onFolderDragLeave(event)" ondrop="onDropToFolder(event,'${f.id}')">
+        <div class="lib-folder-header" onclick="toggleFolderCollapse('${f.id}')">
+          <span class="lib-caret">${isOpen?'▾':'▸'}</span>
+          <span class="lib-folder-name">📁 ${escapeHtml(f.name)}</span>
+          <span class="lib-folder-count">${items.length}</span>
+          <span class="lib-folder-actions">
+            <span onclick="event.stopPropagation();renameFolder('${f.id}')" title="이름 변경">✏️</span>
+            <span onclick="event.stopPropagation();deleteFolder('${f.id}')" title="폴더 삭제">🗑️</span>
+          </span>
+        </div>
+        ${isOpen?`<div class="lib-folder-body">${items.length?items.map(renderLibItem).join(''):'<div class="empty-note" style="padding:6px 0;">여기로 항목을 끌어다 놓아보세요.</div>'}</div>`:''}
+      </div>`;
+  }).join('');
+
+  wrap.innerHTML=(library.folders.length||unfiled.length ? unfiledBlock+folderBlocks : '<div class="empty-note">저장된 핸드아웃이 없어요. 오른쪽에서 작성한 뒤 "💾 보관함에 저장"을 눌러보세요.</div>');
+  hydrateDraftPreviews(wrap);
+}
+
+/* ---------- 알림음 ---------- */
+let _audioCtx=null;
+function getAudioCtx(){
+  if(!_audioCtx){
+    try{ _audioCtx=new (window.AudioContext||window.webkitAudioContext)(); }
+    catch(e){ return null; }
+  }
+  if(_audioCtx.state==='suspended') _audioCtx.resume().catch(()=>{});
+  return _audioCtx;
+}
+function playNotifySound(){
+  const ctx=getAudioCtx();
+  if(!ctx) return;
+  try{
+    const now=ctx.currentTime;
+    [660,880].forEach((freq,i)=>{
+      const o=ctx.createOscillator();
+      const g=ctx.createGain();
+      o.type='sine';
+      o.frequency.value=freq;
+      o.connect(g);g.connect(ctx.destination);
+      const start=now+i*0.12;
+      g.gain.setValueAtTime(0.0001,start);
+      g.gain.exponentialRampToValueAtTime(0.18,start+0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001,start+0.35);
+      o.start(start);
+      o.stop(start+0.4);
+    });
+  }catch(e){}
 }
 
 /* ---------- utils ---------- */
@@ -1169,6 +1388,7 @@ function handleMsg(msg){
       inbox.push({id:msg.id,title:msg.title,kind:msg.kind,body:msg.body,fileId:msg.fileId,ts:Date.now(),opened:false});
       renderInbox();
       savePlInbox();
+      playNotifySound();
       toast('🕯️ 새 핸드아웃이 도착했어요');
     } else if(msg.type==='room-name'){
       roomName=msg.name||'';
@@ -1479,7 +1699,7 @@ async function stashDraftImages(html){
 
 async function saveComposeToLibrary(){
   const title=document.getElementById('composeTitle').value.trim()||'제목 없는 핸드아웃';
-  let kind,body=null,draftImageId=null,previewUrl=null;
+  let kind,body=null,draftImageId=null;
 
   if(composeType==='text'){
     const bodyEl=document.getElementById('composeBody');
@@ -1496,10 +1716,10 @@ async function saveComposeToLibrary(){
     kind='image';
     draftImageId='draft-'+uid();
     await idbPutImage(draftImageId,pickedFile.blob);
-    previewUrl=pickedFile.dataUrl;
   }
 
-  library.items.push({id:uid(),folderId:currentFolderId,title,kind,body,draftImageId,previewUrl,createdAt:Date.now()});
+  // 새로 저장한 항목은 항상 "미분류"에 들어가요 — 트리에서 원하는 폴더로 드래그해서 정리해주세요
+  library.items.push({id:uid(),folderId:null,title,kind,body,draftImageId,createdAt:Date.now()});
   saveLibrary();
   renderLibrary();
   toast('💾 보관함에 저장했어요');
@@ -1616,11 +1836,6 @@ function buildJoinLink(){
 function copyJoinLink(){
   navigator.clipboard.writeText(buildJoinLink())
     .then(()=>toast('참가 링크를 복사했어요'))
-    .catch(()=>toast('복사에 실패했어요'));
-}
-function copyJoinCode(){
-  navigator.clipboard.writeText(roomCode)
-    .then(()=>toast('방 코드를 복사했어요'))
     .catch(()=>toast('복사에 실패했어요'));
 }
 
