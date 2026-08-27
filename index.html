@@ -518,7 +518,7 @@ textarea{resize:vertical;min-height:80px;}
       </div>
       <div class="panel">
         <h2>도착한 핸드아웃</h2>
-        <div class="envelope-grid" id="inboxGrid"></div>
+        <div id="inboxTree"></div>
         <div class="empty-note" id="inboxEmpty">아직 도착한 핸드아웃이 없어요. GM이 보내면 여기 핸드아웃이 나타나요.</div>
       </div>
     </div>
@@ -870,6 +870,8 @@ async function resolveDraftImagesForSend(html){
 async function deliverLibraryItem(item,targets,allFlag){
   const handoutId=uid();
   const payloadBase={type:'handout',id:handoutId,title:item.title,kind:item.kind};
+  const folder=library.folders.find(f=>f.id===item.folderId);
+  if(folder) payloadBase.folderName=folder.name;
   let logBody=null,logPreview=null,fileIdForLog=null;
 
   if(item.kind==='text'){
@@ -1525,7 +1527,7 @@ function handleMsg(msg){
   } else if(role==='PL'){
     if(msg.type==='handout'){
       if(msg.to && msg.to!==peerId) return; // 나한테 온 게 아니면 무시
-      inbox.push({id:msg.id,title:msg.title,kind:msg.kind,body:msg.body,fileId:msg.fileId,ts:Date.now(),opened:false});
+      inbox.push({id:msg.id,title:msg.title,kind:msg.kind,body:msg.body,fileId:msg.fileId,ts:Date.now(),opened:false,folderName:msg.folderName||null});
       renderInbox();
       savePlInbox();
       playNotifySound();
@@ -2128,15 +2130,50 @@ function loadPlInbox(){
 }
 
 /* ---------- PL: inbox ---------- */
-function renderInbox(){
-  const grid=document.getElementById('inboxGrid');
-  document.getElementById('inboxEmpty').style.display=inbox.length?'none':'block';
-  grid.innerHTML=inbox.map((h,i)=>`
+let collapsedInboxFolders = new Set();
+
+function toggleInboxFolderCollapse(key){
+  if(collapsedInboxFolders.has(key)) collapsedInboxFolders.delete(key);
+  else collapsedInboxFolders.add(key);
+  renderInbox();
+}
+
+function renderEnvelopeCard(h){
+  const i=inbox.indexOf(h);
+  return `
     <div class="envelope ${h.opened?'opened':''}" onclick="openHandout(${i})">
       <div class="flap"></div>
       <div class="seal">${h.kind==='image'?'🖼':'✉'}</div>
       <div class="etitle">${escapeHtml(h.title)}</div>
-    </div>`).join('');
+    </div>`;
+}
+
+function renderInbox(){
+  const wrap=document.getElementById('inboxTree');
+  document.getElementById('inboxEmpty').style.display=inbox.length?'none':'block';
+  if(!wrap) return;
+  if(!inbox.length){ wrap.innerHTML=''; return; }
+
+  const groups=[];
+  const unfiled=inbox.filter(h=>!h.folderName);
+  if(unfiled.length) groups.push({key:'unfiled',label:'미분류',icon:'🗂️',items:unfiled});
+  const folderNames=[...new Set(inbox.filter(h=>h.folderName).map(h=>h.folderName))];
+  folderNames.forEach(name=>{
+    groups.push({key:'f:'+name,label:name,icon:'📁',items:inbox.filter(h=>h.folderName===name)});
+  });
+
+  wrap.innerHTML=groups.map(g=>{
+    const isOpen=!collapsedInboxFolders.has(g.key);
+    return `
+      <div class="lib-folder">
+        <div class="lib-folder-header" data-fkey="${escapeHtml(g.key)}" onclick="toggleInboxFolderCollapse(this.dataset.fkey)">
+          <span class="lib-caret">${isOpen?'▾':'▸'}</span>
+          <span class="lib-folder-name">${g.icon} ${escapeHtml(g.label)}</span>
+          <span class="lib-folder-count">${g.items.length}</span>
+        </div>
+        ${isOpen?`<div class="lib-folder-body"><div class="envelope-grid">${g.items.map(renderEnvelopeCard).join('')}</div></div>`:''}
+      </div>`;
+  }).join('');
 }
 
 function openHandout(i){
