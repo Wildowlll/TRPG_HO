@@ -360,7 +360,7 @@ textarea{resize:vertical;min-height:80px;}
     <header>
       <div class="eyebrow">Confidential Dispatch</div>
       <h1>TRPG Handout 전달기</h1>
-      <p class="sub">GM이 지정한 조사원에게만 전해지는 비밀 핸드아웃</p>
+      <p class="sub">GM이 지정한 PL에게만 전해지는 비밀 핸드아웃</p>
     </header>
 
     <div class="panel hidden" id="recentRoomsWrap" style="margin-top:20px;">
@@ -372,7 +372,7 @@ textarea{resize:vertical;min-height:80px;}
       <div class="role-card" onclick="startGM()">
         <span class="icon">🕯️</span>
         <h3>GM으로 시작</h3>
-        <p>방을 열고 코드를 공유한 뒤, 특정 조사원에게만 몰래 핸드아웃을 전달해요.</p>
+        <p>방을 열고 코드를 공유한 뒤, 특정 PL에게만 몰래 핸드아웃을 전달해요.</p>
       </div>
       <div class="role-card" onclick="showJoin()">
         <span class="icon">🗝️</span>
@@ -420,7 +420,7 @@ textarea{resize:vertical;min-height:80px;}
           <button class="dropdown-toggle" onclick="toggleRosterDropdown(event)">👥 참가자 <span id="rosterCount">0</span> <span style="font-size:10px;">▾</span></button>
           <div class="dropdown-panel hidden" id="rosterDropdown">
             <div class="roster" id="rosterList"></div>
-            <div class="empty-note" id="rosterEmpty">아직 참가한 조사원이 없어요.</div>
+            <div class="empty-note" id="rosterEmpty">아직 참가한 PL이 없어요.</div>
           </div>
         </div>
         <span class="back-link" onclick="location.reload()">방 나가기</span>
@@ -492,7 +492,7 @@ textarea{resize:vertical;min-height:80px;}
   <div id="plView" class="hidden">
     <div class="panel" id="nicknamePanel">
       <h2>🕯️ 방에 입장했어요</h2>
-      <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">이름을 입력하면 GM에게 조사원으로 등록돼요.</p>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">이름을 입력하면 GM에게 PL로 등록돼요.</p>
       <label>내 이름 (닉네임)</label>
       <input type="text" id="joinName" placeholder="캐릭터명 또는 닉네임" style="margin-bottom:14px;" onkeydown="if(event.key==='Enter')confirmNickname()">
       <button class="btn btn-gold" onclick="confirmNickname()">확인</button>
@@ -1183,7 +1183,7 @@ function openLibraryItemModal(itemId){
           <span class="status-dot ${p.online?'on':'off'}"></span>
           <span class="rname">${escapeHtml(p.name)}${got?' <span style="color:var(--muted);font-size:11px;">(이미 받음)</span>':(p.online?'':' <span style="color:var(--muted);font-size:11px;">(오프라인)</span>')}</span>
         </div>`;
-      }).join('') || '<div class="empty-note">참가한 조사원이 아직 없어요.</div>'}
+      }).join('') || '<div class="empty-note">참가한 PL이 아직 없어요.</div>'}
     </div>
     <button class="btn btn-seal" style="width:100%;" onclick="sendFromLibraryModal('${itemId}')">🕯️ 전달하기</button>
   </div>`;
@@ -1330,7 +1330,7 @@ function renderBulkSendTargetList(){
         <input type="checkbox" class="bulk-target-check" value="${id}" ${allChecked?'checked disabled':''}>
         <span class="status-dot ${p.online?'on':'off'}"></span>
         <span class="rname">${escapeHtml(p.name)}${p.online?'':' <span style="color:var(--muted);font-size:11px;">(오프라인)</span>'}</span>
-      </div>`).join('') || '<div class="empty-note">참가한 조사원이 아직 없어요.</div>';
+      </div>`).join('') || '<div class="empty-note">참가한 PL이 아직 없어요.</div>';
   }
 }
 
@@ -1906,7 +1906,7 @@ document.addEventListener('click',(ev)=>{
   }
 });
 
-/* ---------- GM: 재접속한 조사원에게 밀린 핸드아웃 자동 전달 ---------- */
+/* ---------- GM: 재접속한 PL에게 밀린 핸드아웃 자동 전달 ---------- */
 async function buildHandoutPayload(item){
   const payloadBase={type:'handout',id:item.id,title:item.title,kind:item.kind};
   if(item.kind==='text'){
