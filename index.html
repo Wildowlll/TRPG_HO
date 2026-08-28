@@ -936,7 +936,29 @@ async function resolveDraftImagesForSend(html){
   return doc.body.innerHTML;
 }
 
+// 이 핸드아웃(보관함 항목)을 이미 받은 사람들 (회수된 건은 제외 - 다시 보낼 수 있게)
+function getAlreadyDeliveredTargets(libraryItemId){
+  const ids=new Set();
+  sentLog.filter(s=>s.libraryItemId===libraryItemId && !s.recalled).forEach(s=>{
+    s.targets.forEach(t=>ids.add(t));
+  });
+  return ids;
+}
+
 async function deliverLibraryItem(item,targets,allFlag){
+  const alreadyDelivered=getAlreadyDeliveredTargets(item.id);
+
+  let finalTargets=targets;
+  let skippedNames=[];
+  if(!allFlag){
+    finalTargets=targets.filter(t=>!alreadyDelivered.has(t));
+    skippedNames=targets.filter(t=>alreadyDelivered.has(t)).map(t=>roster.get(t)?.name||'?');
+    if(finalTargets.length===0){
+      toast(skippedNames.length ? `이미 다 받은 사람들이에요 (${skippedNames.join(', ')})` : '보낼 대상이 없어요');
+      return;
+    }
+  }
+
   const handoutId=uid();
   const payloadBase={type:'handout',id:handoutId,title:item.title,kind:item.kind};
   const folder=library.folders.find(f=>f.id===item.folderId);
@@ -962,7 +984,7 @@ async function deliverLibraryItem(item,targets,allFlag){
     sendMsg(payloadBase);
     onlineTargets=[...roster.entries()].filter(([id,p])=>p.online).map(([id])=>id);
   } else {
-    targets.forEach(t=>{
+    finalTargets.forEach(t=>{
       if(roster.get(t)?.online){ sendMsg({...payloadBase,to:t}); onlineTargets.push(t); }
       else{ offlineTargets.push(t); }
     });
@@ -970,10 +992,14 @@ async function deliverLibraryItem(item,targets,allFlag){
 
   sentLog.unshift({
     id:handoutId,title:item.title,kind:item.kind,ts:Date.now(),
-    targets: allFlag?onlineTargets:targets,
+    targets: allFlag?onlineTargets:finalTargets,
     allFlag,seenBy:new Set(),body:logBody,previewUrl:logPreview,fileId:fileIdForLog,
     pendingTargets:offlineTargets,libraryItemId:item.id
   });
+
+  if(skippedNames.length){
+    toast(`${skippedNames.join(', ')} 님은 이미 받아서 제외했어요`);
+  }
 }
 
 function toggleFolderCollapse(folderId){
@@ -1137,18 +1163,22 @@ function openLibraryItemModal(itemId){
   }
   historyHtml+='</div>';
 
+  const alreadyDelivered=getAlreadyDeliveredTargets(itemId);
   const sendHtml=`<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
     <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">📬 전달하기</div>
-    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-on-paper);margin:0 0 8px;">
-      <input type="checkbox" id="libModalTargetAll-${itemId}"> 전체 공개
+    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:${alreadyDelivered.size?'var(--muted)':'var(--text-on-paper)'};margin:0 0 8px;">
+      <input type="checkbox" id="libModalTargetAll-${itemId}" ${alreadyDelivered.size?'disabled':''}> 전체 공개${alreadyDelivered.size?' (이미 받은 사람이 있어서 개별 선택만 가능해요)':''}
     </label>
     <div class="roster" style="margin-bottom:8px;">
-      ${[...roster.entries()].map(([id,p])=>`
-        <div class="roster-item">
-          <input type="checkbox" class="libmodal-target-check" data-item="${itemId}" value="${id}">
+      ${[...roster.entries()].map(([id,p])=>{
+        const got=alreadyDelivered.has(id);
+        return `
+        <div class="roster-item" ${got?'style="opacity:.5;"':''}>
+          <input type="checkbox" class="libmodal-target-check" data-item="${itemId}" value="${id}" ${got?'disabled':''}>
           <span class="status-dot ${p.online?'on':'off'}"></span>
-          <span class="rname">${escapeHtml(p.name)}${p.online?'':' <span style="color:var(--muted);font-size:11px;">(오프라인)</span>'}</span>
-        </div>`).join('') || '<div class="empty-note">참가한 조사원이 아직 없어요.</div>'}
+          <span class="rname">${escapeHtml(p.name)}${got?' <span style="color:var(--muted);font-size:11px;">(이미 받음)</span>':(p.online?'':' <span style="color:var(--muted);font-size:11px;">(오프라인)</span>')}</span>
+        </div>`;
+      }).join('') || '<div class="empty-note">참가한 조사원이 아직 없어요.</div>'}
     </div>
     <button class="btn btn-seal" style="width:100%;" onclick="sendFromLibraryModal('${itemId}')">🕯️ 전달하기</button>
   </div>`;
