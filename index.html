@@ -428,6 +428,12 @@ textarea{resize:vertical;min-height:80px;}
     <div class="gm-columns">
       <div class="panel">
         <h2>📁 핸드아웃 보관함</h2>
+        <input type="text" id="libSearchInput" placeholder="🔍 제목으로 검색..." oninput="renderLibrary()" style="margin-bottom:10px;">
+        <div class="row" id="libBulkToolbar" style="margin-bottom:10px;gap:6px;">
+          <select id="libMoveTarget" style="background:var(--input-bg);border:1px solid var(--border);color:var(--text-main);border-radius:6px;padding:5px 8px;font-size:12px;"></select>
+          <button class="icon-btn" onclick="bulkMoveLibraryItems()">이동</button>
+          <button class="icon-btn" style="color:#c0392b;" onclick="bulkDeleteLibraryItems()">🗑️ 선택 삭제</button>
+        </div>
         <div class="lib-tree" id="libraryTree"></div>
         <div class="row" style="margin-top:10px;">
           <button class="icon-btn" onclick="createFolder()">+ 새 폴더</button>
@@ -1154,6 +1160,7 @@ function renderLibItem(it){
   return `
     <div class="lib-item" draggable="true" ondragstart="onItemDragStart(event,'${it.id}')">
       <div class="lib-item-row" onclick="toggleLibraryItemExpand('${it.id}')">
+        <input type="checkbox" class="lib-select-check" value="${it.id}" onclick="event.stopPropagation()">
         ${iconHtml}
         <span class="rname">${escapeHtml(it.title)}</span>
         <span class="st-caret">${isOpen?'▲':'▼'}</span>
@@ -1170,6 +1177,19 @@ function renderLibItem(it){
 function renderLibrary(){
   const wrap=document.getElementById('libraryTree');
   if(!wrap) return;
+
+  renderLibMoveOptions();
+
+  const query=(document.getElementById('libSearchInput')?.value||'').trim().toLowerCase();
+  if(query){
+    const matches=library.items.filter(it=>it.title.toLowerCase().includes(query));
+    wrap.innerHTML=matches.length
+      ? `<div class="lib-folder-body" style="padding-left:0;">${matches.map(renderLibItem).join('')}</div>`
+      : '<div class="empty-note">검색 결과가 없어요.</div>';
+    hydrateDraftPreviews(wrap);
+    renderBulkSendItemList();
+    return;
+  }
 
   const unfiled=library.items.filter(it=>!it.folderId);
   const unfiledBlock=`
@@ -1203,6 +1223,44 @@ function renderLibrary(){
   wrap.innerHTML=(library.folders.length||unfiled.length ? unfiledBlock+folderBlocks : '<div class="empty-note">저장된 핸드아웃이 없어요. 아래에서 작성한 뒤 "💾 보관함에 저장"을 눌러보세요.</div>');
   hydrateDraftPreviews(wrap);
   renderBulkSendItemList();
+}
+
+function renderLibMoveOptions(){
+  const sel=document.getElementById('libMoveTarget');
+  if(!sel) return;
+  sel.innerHTML=`<option value="">폴더로 이동...</option><option value="__none__">🗂️ 미분류로</option>`+
+    library.folders.map(f=>`<option value="${f.id}">📁 ${escapeHtml(f.name)}</option>`).join('');
+}
+
+function bulkMoveLibraryItems(){
+  const checked=[...document.querySelectorAll('.lib-select-check:checked')].map(c=>c.value);
+  if(checked.length===0){ toast('이동할 항목을 선택해주세요'); return; }
+  const target=document.getElementById('libMoveTarget').value;
+  if(!target){ toast('이동할 폴더를 선택해주세요'); return; }
+  const folderId=target==='__none__'?null:target;
+  checked.forEach(id=>{
+    const item=library.items.find(it=>it.id===id);
+    if(item) item.folderId=folderId;
+  });
+  saveLibrary();
+  renderLibrary();
+  toast(`${checked.length}개 항목을 옮겼어요`);
+}
+
+async function bulkDeleteLibraryItems(){
+  const checked=[...document.querySelectorAll('.lib-select-check:checked')].map(c=>c.value);
+  if(checked.length===0){ toast('삭제할 항목을 선택해주세요'); return; }
+  const ok=confirm(`선택한 ${checked.length}개 핸드아웃을 보관함에서 삭제할까요?`);
+  if(!ok) return;
+  for(const id of checked){
+    const item=library.items.find(it=>it.id===id);
+    if(!item) continue;
+    for(const did of collectDraftImageIds(item)) await idbDeleteImage(did);
+  }
+  library.items=library.items.filter(it=>!checked.includes(it.id));
+  saveLibrary();
+  renderLibrary();
+  toast(`${checked.length}개 항목을 삭제했어요`);
 }
 
 /* ---------- GM: 여러 핸드아웃을 골라 한번에 전달 ---------- */
@@ -2260,12 +2318,14 @@ function renderInbox(){
 
   wrap.innerHTML=groups.map(g=>{
     const isOpen=!collapsedInboxFolders.has(g.key);
+    const unreadCount=g.items.filter(h=>!h.opened).length;
     return `
       <div class="lib-folder">
         <div class="lib-folder-header" data-fkey="${escapeHtml(g.key)}" onclick="toggleInboxFolderCollapse(this.dataset.fkey)">
           <span class="lib-caret">${isOpen?'▾':'▸'}</span>
           <span class="lib-folder-name">${g.icon} ${escapeHtml(g.label)}</span>
-          <span class="lib-folder-count">${g.items.length}</span>
+          ${unreadCount>0?`<span style="background:var(--seal);color:#fff;font-size:10.5px;font-weight:700;border-radius:10px;padding:1px 7px;">${unreadCount} 안읽음</span>`:''}
+          <span class="lib-folder-count">${g.items.length}개</span>
         </div>
         ${isOpen?`<div class="lib-folder-body"><div class="envelope-grid">${g.items.map(renderEnvelopeCard).join('')}</div></div>`:''}
       </div>`;
