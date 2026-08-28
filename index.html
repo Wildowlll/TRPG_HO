@@ -544,7 +544,6 @@ let sentLogPage = 1;
 const SENT_LOG_PAGE_SIZE = 8;
 let library = {folders:[], items:[]}; // 핸드아웃 보관함 (방 코드별로 분리 저장)
 let collapsedFolders = new Set(); // 접힌 폴더 id
-let expandedLibraryItems = new Set(); // 펼쳐진 보관함 항목 id
 let draggedItemId = null;
 let inbox = [];          // PL: {id, title, kind, body, fileId, ts, opened}
 let composeType = 'text';
@@ -973,34 +972,8 @@ async function deliverLibraryItem(item,targets,allFlag){
     id:handoutId,title:item.title,kind:item.kind,ts:Date.now(),
     targets: allFlag?onlineTargets:targets,
     allFlag,seenBy:new Set(),body:logBody,previewUrl:logPreview,fileId:fileIdForLog,
-    pendingTargets:offlineTargets
+    pendingTargets:offlineTargets,libraryItemId:item.id
   });
-}
-
-async function sendDraftItem(itemId){
-  const item=library.items.find(it=>it.id===itemId);
-  if(!item) return;
-  const allFlag=document.getElementById(`draftTargetAll-${itemId}`)?.checked;
-  let targets=[];
-  if(!allFlag){
-    targets=[...document.querySelectorAll(`.draft-target-check[data-draft-item="${itemId}"]:checked`)].map(c=>c.value);
-    if(targets.length===0){toast('받는 사람을 선택해주세요');return;}
-  }
-
-  toast('전송 준비 중...');
-  await deliverLibraryItem(item,targets,allFlag);
-  sentLogPage=1;
-  renderSentLog();
-  saveGmState();
-  expandedLibraryItems.delete(itemId);
-  renderLibrary();
-  toast('🕯️ 보관함에서 바로 보냈어요');
-}
-
-function toggleLibraryItemExpand(id){
-  if(expandedLibraryItems.has(id)) expandedLibraryItems.delete(id);
-  else expandedLibraryItems.add(id);
-  renderLibrary();
 }
 
 function toggleFolderCollapse(folderId){
@@ -1091,7 +1064,8 @@ async function loadDraftIntoCompose(itemId){
       toast('보관함 이미지를 찾을 수 없어요');
     }
   }
-  toast('📥 보관함 내용을 불러왔어요 — 받는 사람을 고르고 보내세요');
+  document.querySelectorAll('.modal-bg').forEach(m=>m.remove());
+  toast('📥 작성칸에 불러왔어요');
   document.getElementById('composeTitle').scrollIntoView({behavior:'smooth',block:'center'});
 }
 
@@ -1103,55 +1077,111 @@ async function deleteDraftItem(itemId){
   for(const did of collectDraftImageIds(item)) await idbDeleteImage(did);
   library.items=library.items.filter(it=>it.id!==itemId);
   saveLibrary();
+  document.querySelectorAll('.modal-bg').forEach(m=>m.remove());
   renderLibrary();
   toast('보관함에서 삭제했어요');
 }
 
-function renderDraftTargetPicker(itemId){
-  const online=[...roster.entries()].filter(([id,p])=>p.online);
-  return `
-    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);">
-      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-main);margin:0 0 6px;">
-        <input type="checkbox" id="draftTargetAll-${itemId}"> 전체 공개
-      </label>
-      <div class="roster" style="margin-bottom:8px;">
-        ${online.length?online.map(([id,p])=>`
-          <div class="roster-item">
-            <input type="checkbox" class="draft-target-check" data-draft-item="${itemId}" value="${id}">
-            <span class="rname">${escapeHtml(p.name)}</span>
-          </div>`).join(''):'<div class="empty-note" style="padding:4px 0;">접속 중인 조사원이 없어요.</div>'}
-      </div>
-      <button class="btn btn-seal" style="width:100%;" onclick="event.stopPropagation();sendDraftItem('${itemId}')">🕯️ 받는 사람에게 바로 보내기</button>
-    </div>`;
+/* ---------- 보관함: 항목 팝업 (내용 + 보낸 이력 + 전달하기) ---------- */
+async function sendFromLibraryModal(itemId){
+  const item=library.items.find(it=>it.id===itemId);
+  if(!item) return;
+  const allFlag=document.getElementById(`libModalTargetAll-${itemId}`)?.checked;
+  let targets=[];
+  if(!allFlag){
+    targets=[...document.querySelectorAll(`.libmodal-target-check[data-item="${itemId}"]:checked`)].map(c=>c.value);
+    if(targets.length===0){ toast('받는 사람을 선택해주세요'); return; }
+  }
+  toast('전송 준비 중...');
+  await deliverLibraryItem(item,targets,allFlag);
+  sentLogPage=1;
+  renderSentLog();
+  saveGmState();
+  document.querySelectorAll('.modal-bg').forEach(m=>m.remove());
+  openLibraryItemModal(itemId);
+  toast('🕯️ 전달했어요');
+}
+
+function openLibraryItemModal(itemId){
+  const item=library.items.find(it=>it.id===itemId);
+  if(!item) return;
+
+  let contentHtml='';
+  if(item.kind==='image'){
+    contentHtml=`<div class="sent-content"><img data-draft-id="${item.draftImageId}" style="max-width:100%;border-radius:8px;min-height:30px;"></div>`;
+  } else {
+    contentHtml=`<div class="sent-content">${sanitizeHtml(item.body||'')}</div>`;
+  }
+
+  const relatedSends=sentLog.filter(s=>s.libraryItemId===itemId);
+  let historyHtml=`<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">📬 보낸 이력</div>`;
+  if(!relatedSends.length){
+    historyHtml+=`<div class="empty-note">아직 보낸 적 없어요.</div>`;
+  } else {
+    historyHtml+=relatedSends.map(s=>{
+      const names=s.targets.map(id=>roster.get(id)?.name||'(알수없음)');
+      const seenChips=s.targets.map(id=>{
+        const seen=s.seenBy.has(id);
+        const isPending=(s.pendingTargets||[]).includes(id);
+        const nm=roster.get(id)?.name||'?';
+        const label=seen?'✓ 확인':(isPending?'📴 오프라인 대기':'대기중');
+        return `<span class="seen-chip ${seen?'':'pending'}">${escapeHtml(nm)} ${label}</span>`;
+      }).join('');
+      return `<div class="sent-item" style="margin-bottom:8px;">
+        <div class="st-meta">${s.allFlag?'전체 공개':`${names.length}명에게 전달`} · ${new Date(s.ts).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}${s.recalled?' · <span style="color:#c0392b;">🚫 회수됨</span>':''}</div>
+        <div style="margin:6px 0;">${seenChips}</div>
+        ${!s.recalled?`<button class="icon-btn" style="color:#c0392b;" onclick="recallHandout('${s.id}');document.querySelectorAll('.modal-bg').forEach(m=>m.remove());openLibraryItemModal('${itemId}');">🚫 회수하기</button>`:''}
+      </div>`;
+    }).join('');
+  }
+  historyHtml+='</div>';
+
+  const sendHtml=`<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">📬 전달하기</div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-on-paper);margin:0 0 8px;">
+      <input type="checkbox" id="libModalTargetAll-${itemId}"> 전체 공개
+    </label>
+    <div class="roster" style="margin-bottom:8px;">
+      ${[...roster.entries()].map(([id,p])=>`
+        <div class="roster-item">
+          <input type="checkbox" class="libmodal-target-check" data-item="${itemId}" value="${id}">
+          <span class="status-dot ${p.online?'on':'off'}"></span>
+          <span class="rname">${escapeHtml(p.name)}${p.online?'':' <span style="color:var(--muted);font-size:11px;">(오프라인)</span>'}</span>
+        </div>`).join('') || '<div class="empty-note">참가한 조사원이 아직 없어요.</div>'}
+    </div>
+    <button class="btn btn-seal" style="width:100%;" onclick="sendFromLibraryModal('${itemId}')">🕯️ 전달하기</button>
+  </div>`;
+
+  const bg=document.createElement('div');
+  bg.className='modal-bg';
+  bg.onclick=(e)=>{if(e.target===bg)bg.remove();};
+  bg.innerHTML=`<div class="modal-card">
+    <button class="modal-close" onclick="this.closest('.modal-bg').remove()">✕</button>
+    <h3>${escapeHtml(item.title)}</h3>
+    <div class="mbody">
+      ${contentHtml}
+      ${historyHtml}
+      ${sendHtml}
+    </div>
+  </div>`;
+  document.body.appendChild(bg);
+  hydrateDraftPreviews(bg.querySelector('.mbody'));
 }
 
 function renderLibItem(it){
-  const isOpen=expandedLibraryItems.has(it.id);
   const iconHtml = it.kind==='image'
     ? `<img data-draft-id="${it.draftImageId}" style="width:26px;height:26px;object-fit:cover;border-radius:5px;flex-shrink:0;background:#00000020;">`
     : `<span style="font-size:15px;flex-shrink:0;">✍️</span>`;
-  let contentHtml='';
-  if(isOpen){
-    if(it.kind==='image'){
-      contentHtml=`<div class="sent-content"><img data-draft-id="${it.draftImageId}" style="max-width:100%;border-radius:8px;min-height:30px;"></div>`;
-    } else {
-      contentHtml=`<div class="sent-content">${sanitizeHtml(it.body||'')}</div>`;
-    }
-  }
   return `
     <div class="lib-item" draggable="true" ondragstart="onItemDragStart(event,'${it.id}')">
-      <div class="lib-item-row" onclick="toggleLibraryItemExpand('${it.id}')">
-        <input type="checkbox" class="lib-select-check" value="${it.id}" onclick="event.stopPropagation()">
+      <div class="lib-item-row">
+        <input type="checkbox" class="lib-select-check" value="${it.id}">
         ${iconHtml}
-        <span class="rname">${escapeHtml(it.title)}</span>
-        <span class="st-caret">${isOpen?'▲':'▼'}</span>
+        <span class="rname" style="cursor:pointer;" onclick="openLibraryItemModal('${it.id}')">${escapeHtml(it.title)}</span>
+        <button class="icon-btn" style="padding:4px 8px;font-size:11px;" onclick="loadDraftIntoCompose('${it.id}')" title="작성칸에 불러오기">📥</button>
+        <button class="icon-btn" style="padding:4px 8px;font-size:11px;" onclick="deleteDraftItem('${it.id}')" title="삭제">🗑️</button>
       </div>
-      ${contentHtml}
-      ${isOpen?`<div class="row" style="margin-top:6px;">
-        <button class="icon-btn" style="padding:4px 8px;font-size:11.5px;" onclick="event.stopPropagation();loadDraftIntoCompose('${it.id}')">📥 작성칸에 불러오기</button>
-        <button class="icon-btn" style="padding:4px 8px;font-size:11.5px;" onclick="event.stopPropagation();deleteDraftItem('${it.id}')">🗑️ 삭제</button>
-      </div>
-      ${renderDraftTargetPicker(it.id)}`:''}
     </div>`;
 }
 
@@ -2013,44 +2043,6 @@ async function saveComposeToLibrary(){
   resetComposeForm();
 }
 
-async function doResend(itemId){
-  const item=sentLog.find(s=>s.id===itemId);
-  if(!item) return;
-  const checked=[...document.querySelectorAll(`.resend-check[data-resend-item="${itemId}"]:checked`)].map(c=>c.value);
-  if(checked.length===0){toast('보낼 대상을 선택해주세요');return;}
-
-  const payloadBase={type:'handout',id:item.id,title:item.title,kind:item.kind};
-  if(item.kind==='text'){
-    payloadBase.body=item.body;
-  } else {
-    // 이미지는 서버 파일이 만료됐을 수 있으니, 내 캐시에 있으면 새로 올려서 최신 링크로 갱신
-    try{
-      const cachedBlob=await idbGetImage(item.fileId);
-      if(cachedBlob){
-        toast('캐시된 이미지를 다시 업로드하는 중...');
-        const freshFileId=await uploadBlob(cachedBlob,`resend-${Date.now()}.png`);
-        idbPutImage(freshFileId,cachedBlob).catch(()=>{});
-        item.fileId=freshFileId; // 앞으로도 이 최신 파일로 계속 사용
-        payloadBase.fileId=freshFileId;
-      } else {
-        payloadBase.fileId=item.fileId; // 캐시에 없으면 기존 값으로 시도
-      }
-    }catch(e){
-      payloadBase.fileId=item.fileId;
-    }
-  }
-
-  if(!payloadBase.body && !payloadBase.fileId){toast('원본 내용을 찾을 수 없어요');return;}
-
-  checked.forEach(t=>{
-    sendMsg({...payloadBase,to:t});
-    if(!item.targets.includes(t)) item.targets.push(t);
-  });
-  renderSentLog();
-  saveGmState();
-  toast('🕯️ 핸드아웃을 추가로 보냈어요');
-}
-
 function renderSentLog(){
   const el=document.getElementById('sentLog');
   document.getElementById('sentEmpty').style.display=sentLog.length?'none':'block';
@@ -2063,64 +2055,12 @@ function renderSentLog(){
 
   el.innerHTML=pageItems.map(item=>{
     const names=item.targets.map(id=>roster.get(id)?.name||'(알수없음)');
-    return `<div class="sent-item" style="cursor:pointer;" onclick="openSentLogModal('${item.id}')">
+    return `<div class="sent-item">
       <div class="st-title">${item.kind==='image'?'🖼️':'✍️'} ${escapeHtml(item.title)}${item.recalled?' <span style="color:#c0392b;font-size:11px;">🚫 회수됨</span>':''}</div>
       <div class="st-meta">${item.allFlag?'전체 공개':`${names.length}명에게 전달`} · ${new Date(item.ts).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}</div>
     </div>`;
   }).join('');
   renderSentLogPagination(totalPages);
-}
-
-function openSentLogModal(itemId){
-  const item=sentLog.find(s=>s.id===itemId);
-  if(!item) return;
-
-  const names=item.targets.map(id=>roster.get(id)?.name||'(알수없음)');
-  const seenChips=item.targets.map(id=>{
-    const seen=item.seenBy.has(id);
-    const isPending=(item.pendingTargets||[]).includes(id);
-    const nm=roster.get(id)?.name||'?';
-    const label=seen?'✓ 확인':(isPending?'📴 오프라인 대기':'대기중');
-    return `<span class="seen-chip ${seen?'':'pending'}">${escapeHtml(nm)} ${label}</span>`;
-  }).join('');
-
-  let contentHtml='';
-  if(item.kind==='image' && (item.previewUrl||item.fileId)){
-    contentHtml=`<div class="sent-content"><img data-file-id="${item.fileId||''}" src="${item.previewUrl||''}" style="max-width:100%;border-radius:8px;min-height:36px;"></div>`;
-  } else if(item.kind==='text'){
-    contentHtml=`<div class="sent-content">${sanitizeHtml(item.body||'')}</div>`;
-  } else {
-    contentHtml=`<div class="sent-content" style="color:var(--muted);">미리보기를 표시할 수 없어요.</div>`;
-  }
-
-  const candidates=[...roster.entries()].filter(([id,p])=>p.online && !item.targets.includes(id));
-
-  const bg=document.createElement('div');
-  bg.className='modal-bg';
-  bg.onclick=(e)=>{if(e.target===bg)bg.remove();};
-  bg.innerHTML=`<div class="modal-card">
-    <button class="modal-close" onclick="this.closest('.modal-bg').remove()">✕</button>
-    <h3>${escapeHtml(item.title)}${item.recalled?' <span style="color:#c0392b;font-size:13px;">🚫 회수됨</span>':''}</h3>
-    <div class="mbody">
-      <div style="font-size:11.5px;color:var(--muted);margin-bottom:8px;">${item.allFlag?'전체 공개':`${names.length}명에게 전달`} · ${new Date(item.ts).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}</div>
-      ${contentHtml}
-      <div style="margin:10px 0;">${seenChips}</div>
-      <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">➕ 다른 사람에게 보내기</div>
-        <div class="roster" style="margin-bottom:8px;">
-          ${candidates.length?candidates.map(([id,p])=>`
-            <div class="roster-item">
-              <input type="checkbox" class="resend-check" data-resend-item="${item.id}" value="${id}">
-              <span class="rname">${escapeHtml(p.name)}</span>
-            </div>`).join(''):'<div class="empty-note">보낼 수 있는 다른 참가자가 없어요.</div>'}
-        </div>
-        ${candidates.length?`<button class="btn btn-gold" style="width:100%;margin-bottom:8px;" onclick="doResend('${item.id}');this.closest('.modal-bg').remove();">선택한 사람에게 보내기</button>`:''}
-        ${!item.recalled?`<button class="btn btn-ghost" style="width:100%;color:#c0392b;" onclick="recallHandout('${item.id}');this.closest('.modal-bg').remove();">🚫 회수하기</button>`:''}
-      </div>
-    </div>
-  </div>`;
-  document.body.appendChild(bg);
-  hydrateImages(bg.querySelector('.mbody'));
 }
 
 function renderSentLogPagination(totalPages){
