@@ -1208,12 +1208,17 @@ function renderLibItem(it){
   const iconHtml = it.kind==='image'
     ? `<img data-draft-id="${it.draftImageId}" style="width:26px;height:26px;object-fit:cover;border-radius:5px;flex-shrink:0;background:#00000020;">`
     : `<span style="font-size:15px;flex-shrink:0;">✍️</span>`;
+  const sentCount=new Set(sentLog.filter(s=>s.libraryItemId===it.id && !s.recalled).flatMap(s=>s.targets)).size;
+  const sentBadge=sentCount
+    ? `<span style="font-size:10px;color:var(--gold);opacity:.85;flex-shrink:0;white-space:nowrap;">📤 ${sentCount}명 전달됨</span>`
+    : `<span style="font-size:10px;color:var(--muted);opacity:.7;flex-shrink:0;white-space:nowrap;">전달 안 함</span>`;
   return `
     <div class="lib-item" draggable="true" ondragstart="onItemDragStart(event,'${it.id}')">
       <div class="lib-item-row">
         <input type="checkbox" class="lib-select-check" value="${it.id}">
         ${iconHtml}
         <span class="rname" style="cursor:pointer;" onclick="openLibraryItemModal('${it.id}')">${escapeHtml(it.title)}</span>
+        ${sentBadge}
         <button class="icon-btn" style="padding:4px 8px;font-size:11px;" onclick="loadDraftIntoCompose('${it.id}')" title="작성칸에 불러오기">📥</button>
         <button class="icon-btn" style="padding:4px 8px;font-size:11px;" onclick="deleteDraftItem('${it.id}')" title="삭제">🗑️</button>
       </div>
