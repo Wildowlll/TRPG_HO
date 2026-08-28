@@ -1925,13 +1925,11 @@ function recallHandout(itemId){
   const pending=item.pendingTargets||[];
   const delivered=item.targets.filter(t=>!pending.includes(t));
 
+  item.pendingRecalls=item.pendingRecalls||[];
   delivered.forEach(t=>{
-    if(roster.get(t)?.online){
-      sendMsg({type:'recall',to:t,id:item.id});
-    } else {
-      item.pendingRecalls=item.pendingRecalls||[];
-      if(!item.pendingRecalls.includes(t)) item.pendingRecalls.push(t);
-    }
+    sendMsg({type:'recall',to:t,id:item.id}); // 지금 온라인이면 바로 지워짐
+    // 연결이 불안정해서 방금 시도가 유실됐을 수도 있으니, 다음 접속 때 한번 더 확실하게 재시도
+    if(!item.pendingRecalls.includes(t)) item.pendingRecalls.push(t);
   });
 
   item.pendingTargets=[]; // 아직 전달 안 된 건 그냥 취소
