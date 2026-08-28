@@ -159,11 +159,14 @@ textarea{resize:vertical;min-height:80px;}
 
 /* ---- sent log ---- */
 .sent-item{background:var(--input-bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;}
+.sent-item-compact{background:#00000008;border:1px solid #00000018;border-radius:8px;padding:5px 10px;margin-bottom:5px;line-height:1.2;}
+.sent-item-compact:last-child{margin-bottom:0;}
 .sent-item .st-clickable{cursor:pointer;}
 .sent-item .st-clickable:hover .st-title{color:var(--gold);}
 .sent-item .st-title{font-weight:600;font-size:14px;margin-bottom:4px;transition:color .12s;display:flex;justify-content:space-between;align-items:center;}
 .sent-item .st-caret{font-size:10px;color:var(--muted);}
 .sent-item .st-meta{color:var(--muted);font-size:11.5px;font-family:var(--font-mono);margin-bottom:6px;}
+.sent-item-compact .st-meta{color:var(--text-on-paper);opacity:.65;font-size:11px;font-family:var(--font-mono);margin-bottom:0;}
 .sent-content{
   background:linear-gradient(160deg,var(--paper),var(--paper-2));color:var(--text-on-paper);
   border-radius:8px;padding:14px;margin:6px 0 10px;font-size:13.5px;line-height:1.6;white-space:pre-wrap;
@@ -1154,10 +1157,12 @@ function openLibraryItemModal(itemId){
         const label=seen?'✓ 확인':(isPending?'📴 오프라인 대기':'대기중');
         return `<span class="seen-chip ${seen?'':'pending'}">${escapeHtml(nm)} ${label}</span>`;
       }).join('');
-      return `<div class="sent-item" style="margin-bottom:8px;">
-        <div class="st-meta">${s.allFlag?'전체 공개':`${names.length}명에게 전달`} · ${new Date(s.ts).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}${s.recalled?' · <span style="color:#c0392b;">🚫 회수됨</span>':''}</div>
-        <div style="margin:6px 0;">${seenChips}</div>
-        ${!s.recalled?`<button class="icon-btn" style="color:#c0392b;" onclick="recallHandout('${s.id}');document.querySelectorAll('.modal-bg').forEach(m=>m.remove());openLibraryItemModal('${itemId}');">🚫 회수하기</button>`:''}
+      return `<div class="sent-item-compact">
+        <div class="st-meta" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <span>${s.allFlag?'전체 공개':`${names.length}명에게 전달`} · ${new Date(s.ts).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}${s.recalled?' · <span style="color:#c0392b;">🚫 회수됨</span>':''}</span>
+          ${!s.recalled?`<button class="icon-btn" style="color:#c0392b;padding:2px 7px;font-size:10.5px;flex-shrink:0;" onclick="recallHandout('${s.id}');document.querySelectorAll('.modal-bg').forEach(m=>m.remove());openLibraryItemModal('${itemId}');">🚫 회수</button>`:''}
+        </div>
+        ${seenChips?`<div style="margin-top:4px;">${seenChips}</div>`:''}
       </div>`;
     }).join('');
   }
