@@ -429,7 +429,12 @@ textarea{resize:vertical;min-height:80px;}
       <div class="panel">
         <h2>📁 핸드아웃 보관함</h2>
         <div class="lib-tree" id="libraryTree"></div>
-        <button class="icon-btn" onclick="createFolder()" style="margin-top:10px;">+ 새 폴더</button>
+        <div class="row" style="margin-top:10px;">
+          <button class="icon-btn" onclick="createFolder()">+ 새 폴더</button>
+          <button class="icon-btn" onclick="exportLibrary()">📤 내보내기</button>
+          <button class="icon-btn" onclick="document.getElementById('libraryImportInput').click()">📥 불러오기</button>
+          <input type="file" id="libraryImportInput" accept="application/json" class="hidden" onchange="onLibraryImportFile(event)">
+        </div>
       </div>
 
       <div class="panel">
@@ -549,7 +554,7 @@ let sentLog = [];        // GM: {id, title, kind, ts, targets:[peerId..], allFla
 let expandedSent = new Set(); // 펼쳐진 보낸 핸드아웃 id
 let sentLogPage = 1;
 const SENT_LOG_PAGE_SIZE = 8;
-let library = {folders:[], items:[]}; // 핸드아웃 보관함 (전역, 방 코드와 무관)
+let library = {folders:[], items:[]}; // 핸드아웃 보관함 (방 코드별로 분리 저장)
 let collapsedFolders = new Set(); // 접힌 폴더 id
 let expandedLibraryItems = new Set(); // 펼쳐진 보관함 항목 id
 let draggedItemId = null;
@@ -787,10 +792,13 @@ async function hydrateImages(container){
   }
 }
 
-/* ---------- 보관함: 저장/불러오기 (localStorage, 전역) ---------- */
+/* ---------- 보관함: 저장/불러오기 (localStorage, 방 코드별로 분리) ---------- */
+function libraryKey(code){ return `handout_library_${code}`; }
+
 function loadLibrary(){
+  library={folders:[],items:[]};
   try{
-    const raw=localStorage.getItem('handout_library');
+    const raw=localStorage.getItem(libraryKey(roomCode));
     if(raw) library=JSON.parse(raw);
   }catch(e){
     console.warn('보관함 불러오기 실패:',e);
@@ -799,8 +807,83 @@ function loadLibrary(){
   if(!library.items) library.items=[];
 }
 function saveLibrary(){
-  try{ localStorage.setItem('handout_library',JSON.stringify(library)); }
+  try{ localStorage.setItem(libraryKey(roomCode),JSON.stringify(library)); }
   catch(e){ console.warn('보관함 저장 실패 (localStorage 용량 초과 가능성):',e); }
+}
+
+/* ---------- 보관함: 현재 방 내용을 파일로 내보내기 / 불러오기 ---------- */
+async function exportLibrary(){
+  if(!library.items.length && !library.folders.length){ toast('내보낼 보관함 내용이 없어요'); return; }
+  toast('내보내는 중...');
+  const exportData={folders:library.folders,items:[]};
+  for(const it of library.items){
+    const copy={id:it.id,folderId:it.folderId,title:it.title,kind:it.kind,createdAt:it.createdAt};
+    if(it.kind==='text'){
+      copy.body=await rehydrateDraftImagesToDataUrls(it.body||''); // 이미지를 base64로 파일 안에 통째로 담음
+    } else if(it.kind==='image'){
+      try{
+        const blob=await idbGetImage(it.draftImageId);
+        if(blob) copy.imageData=await blobToDataUrl(blob);
+      }catch(e){}
+    }
+    exportData.items.push(copy);
+  }
+  const blob=new Blob([JSON.stringify(exportData,null,2)],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;
+  a.download=`핸드아웃보관함_${roomName||roomCode}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  toast('📤 보관함을 파일로 내보냈어요');
+}
+
+function onLibraryImportFile(ev){
+  const f=ev.target.files[0];
+  ev.target.value=''; // 같은 파일 다시 선택 가능하도록
+  if(!f) return;
+  importLibraryFile(f);
+}
+
+async function importLibraryFile(file){
+  try{
+    const text=await file.text();
+    const data=JSON.parse(text);
+    const folderIdMap={};
+    (data.folders||[]).forEach(f=>{
+      const newId=uid();
+      folderIdMap[f.id]=newId;
+      library.folders.push({id:newId,name:f.name,createdAt:Date.now()});
+    });
+    let count=0;
+    for(const it of (data.items||[])){
+      const newItem={
+        id:uid(),
+        folderId: it.folderId ? (folderIdMap[it.folderId]||null) : null,
+        title: it.title||'제목 없는 핸드아웃',
+        kind: it.kind,
+        createdAt: Date.now()
+      };
+      if(it.kind==='image' && it.imageData){
+        const blob=await (await fetch(it.imageData)).blob();
+        const draftId='draft-'+uid();
+        await idbPutImage(draftId,blob);
+        newItem.draftImageId=draftId;
+      } else if(it.kind==='text'){
+        newItem.body=await stashDraftImages(it.body||'');
+      }
+      library.items.push(newItem);
+      count++;
+    }
+    saveLibrary();
+    renderLibrary();
+    toast(`📥 보관함을 불러왔어요 (핸드아웃 ${count}개)`);
+  }catch(e){
+    console.error('보관함 불러오기 실패:',e);
+    toast('보관함 파일을 불러오는 데 실패했어요');
+  }
 }
 
 function createFolder(){
