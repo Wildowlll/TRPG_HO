@@ -1752,6 +1752,9 @@ function handleMsg(msg){
         });
         toast('🚫 GM이 이 핸드아웃을 회수했어요');
       }
+    } else if(msg.type==='peer-join'){
+      // 누군가 새로 들어옴 (GM일 수도 있음) - 내 존재를 다시 알려서 밀린 핸드아웃을 받을 수 있게 함
+      if(myName) sendMsg({type:'hello',role:'PL',name:myName});
     }
   }
 }
