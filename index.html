@@ -431,6 +431,10 @@ textarea{resize:vertical;min-height:80px;}
     <div class="gm-columns">
       <div class="panel">
         <h2>새 핸드아웃 작성</h2>
+        <div id="editBanner" class="hidden" style="background:var(--gold-soft);border:1px solid var(--gold);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <span>✏️ <b class="edit-target-title"></b> 수정 중</span>
+          <span style="cursor:pointer;text-decoration:underline;flex-shrink:0;" onclick="cancelEditLibraryItem()">취소</span>
+        </div>
         <label>제목</label>
         <input type="text" id="composeTitle" placeholder="예: 낡은 일기장의 마지막 페이지" style="margin-bottom:12px;">
 
@@ -450,7 +454,7 @@ textarea{resize:vertical;min-height:80px;}
         </div>
 
         <div class="row" style="margin-top:10px;">
-          <button class="btn btn-gold" style="width:100%;" onclick="saveComposeToLibrary()">💾 보관함에 저장</button>
+          <button class="btn btn-gold" id="composeSaveBtn" style="width:100%;" onclick="saveComposeToLibrary()">💾 보관함에 저장</button>
         </div>
       </div>
 
@@ -548,6 +552,7 @@ const SENT_LOG_PAGE_SIZE = 8;
 let library = {folders:[], items:[]}; // 핸드아웃 보관함 (방 코드별로 분리 저장)
 let collapsedFolders = new Set(); // 접힌 폴더 id
 let draggedItemId = null;
+let editingLibraryItemId = null; // 지금 작성칸에서 수정 중인 보관함 항목 id
 let inbox = [];          // PL: {id, title, kind, body, fileId, ts, opened}
 let composeType = 'text';
 let pickedFile = null;    // {blob, name, type, dataUrl}
@@ -1098,11 +1103,68 @@ async function loadDraftIntoCompose(itemId){
   document.getElementById('composeTitle').scrollIntoView({behavior:'smooth',block:'center'});
 }
 
+function renderEditBanner(){
+  const banner=document.getElementById('editBanner');
+  const btn=document.getElementById('composeSaveBtn');
+  if(editingLibraryItemId){
+    const item=library.items.find(it=>it.id===editingLibraryItemId);
+    if(banner){
+      banner.classList.remove('hidden');
+      const t=banner.querySelector('.edit-target-title');
+      if(t) t.textContent=item?item.title:'';
+    }
+    if(btn) btn.textContent='💾 수정 저장';
+  } else {
+    if(banner) banner.classList.add('hidden');
+    if(btn) btn.textContent='💾 보관함에 저장';
+  }
+}
+
+async function editLibraryItem(itemId){
+  const item=library.items.find(it=>it.id===itemId);
+  if(!item) return;
+  document.getElementById('composeTitle').value=item.title;
+  if(item.kind==='text'){
+    setComposeType('text');
+    const rehydrated=await rehydrateDraftImagesToDataUrls(item.body||'');
+    document.getElementById('composeBody').innerHTML=rehydrated;
+  } else {
+    setComposeType('image');
+    const blob=await idbGetImage(item.draftImageId);
+    if(blob){
+      const dataUrl=await blobToDataUrl(blob);
+      pickedFile={blob,name:'library-image',type:blob.type,dataUrl};
+      const drop=document.getElementById('fileDrop');
+      drop.classList.add('has-file');
+      drop.innerHTML=`선택됨: 보관함 이미지<br><img src="${dataUrl}">`;
+    } else {
+      toast('보관함 이미지를 찾을 수 없어요');
+    }
+  }
+  editingLibraryItemId=itemId;
+  renderEditBanner();
+  document.querySelectorAll('.modal-bg').forEach(m=>m.remove());
+  toast('✏️ 수정 모드예요 — 고치고 "수정 저장"을 눌러주세요');
+  document.getElementById('composeTitle').scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+function cancelEditLibraryItem(){
+  editingLibraryItemId=null;
+  resetComposeForm();
+  renderEditBanner();
+  toast('수정을 취소했어요');
+}
+
 async function deleteDraftItem(itemId){
   const item=library.items.find(it=>it.id===itemId);
   if(!item) return;
   const ok=confirm('이 핸드아웃을 보관함에서 삭제할까요?');
   if(!ok) return;
+  if(itemId===editingLibraryItemId){
+    editingLibraryItemId=null;
+    resetComposeForm();
+    renderEditBanner();
+  }
   for(const did of collectDraftImageIds(item)) await idbDeleteImage(did);
   library.items=library.items.filter(it=>it.id!==itemId);
   saveLibrary();
@@ -1141,6 +1203,7 @@ function openLibraryItemModal(itemId){
   } else {
     contentHtml=`<div class="sent-content">${sanitizeHtml(item.body||'')}</div>`;
   }
+  contentHtml+=`<button class="icon-btn" style="margin-top:6px;" onclick="editLibraryItem('${itemId}')">✏️ 이 핸드아웃 수정하기</button>`;
 
   const relatedSends=sentLog.filter(s=>s.libraryItemId===itemId);
   let historyHtml=`<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px;">
@@ -1219,7 +1282,8 @@ function renderLibItem(it){
         ${iconHtml}
         <span class="rname" style="cursor:pointer;" onclick="openLibraryItemModal('${it.id}')">${escapeHtml(it.title)}</span>
         ${sentBadge}
-        <button class="icon-btn" style="padding:4px 8px;font-size:11px;" onclick="loadDraftIntoCompose('${it.id}')" title="작성칸에 불러오기">📥</button>
+        <button class="icon-btn" style="padding:4px 8px;font-size:11px;" onclick="editLibraryItem('${it.id}')" title="수정">✏️</button>
+        <button class="icon-btn" style="padding:4px 8px;font-size:11px;" onclick="loadDraftIntoCompose('${it.id}')" title="작성칸에 불러오기(복제)">📥</button>
         <button class="icon-btn" style="padding:4px 8px;font-size:11px;" onclick="deleteDraftItem('${it.id}')" title="삭제">🗑️</button>
       </div>
     </div>`;
@@ -2076,11 +2140,35 @@ async function saveComposeToLibrary(){
     await idbPutImage(draftImageId,pickedFile.blob);
   }
 
-  // 새로 저장한 항목은 항상 "미분류"에 들어가요 — 트리에서 원하는 폴더로 드래그해서 정리해주세요
-  library.items.push({id:uid(),folderId:null,title,kind,body,draftImageId,createdAt:Date.now()});
-  saveLibrary();
-  renderLibrary();
-  toast('💾 보관함에 저장했어요');
+  if(editingLibraryItemId){
+    const item=library.items.find(it=>it.id===editingLibraryItemId);
+    if(item){
+      // 더이상 안 쓰게 된 옛날 이미지들은 정리
+      const oldImageIds=collectDraftImageIds(item);
+      const newImageIds=new Set();
+      if(kind==='image' && draftImageId) newImageIds.add(draftImageId);
+      if(kind==='text') extractDraftIdsFromText(body,newImageIds);
+      for(const oldId of oldImageIds){
+        if(!newImageIds.has(oldId)) await idbDeleteImage(oldId);
+      }
+      item.title=title;
+      item.kind=kind;
+      item.body=body;
+      item.draftImageId=draftImageId;
+      // folderId는 그대로 유지
+    }
+    editingLibraryItemId=null;
+    saveLibrary();
+    renderLibrary();
+    renderEditBanner();
+    toast('✏️ 수정했어요');
+  } else {
+    // 새로 저장한 항목은 항상 "미분류"에 들어가요 — 트리에서 원하는 폴더로 드래그해서 정리해주세요
+    library.items.push({id:uid(),folderId:null,title,kind,body,draftImageId,createdAt:Date.now()});
+    saveLibrary();
+    renderLibrary();
+    toast('💾 보관함에 저장했어요');
+  }
   resetComposeForm();
 }
 
