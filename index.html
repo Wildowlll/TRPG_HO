@@ -106,7 +106,7 @@ textarea{resize:vertical;min-height:80px;}
   border-collapse:collapse;width:100%;margin:8px 0;font-size:13px;
 }
 .rich-edit td,.rich-edit th,.mbody td,.mbody th,.sent-content td,.sent-content th{
-  border:1px solid transparent;padding:6px 9px;text-align:left;
+  padding:6px 9px;text-align:left;
 }
 .rich-edit th,.mbody th,.sent-content th{background:#ffffff10;font-weight:700;}
 .sent-content th,.mbody th{background:#00000010;}
@@ -571,7 +571,7 @@ const ALLOWED_ATTRS={
   A:['href'],
   IMG:['src','alt','data-file-id','data-draft-id']
 };
-const ALLOWED_STYLE_PROPS=['text-align','vertical-align','background-color','background','color','font-weight','font-style','text-decoration','font-size'];
+const ALLOWED_STYLE_PROPS=['text-align','vertical-align','background-color','background','color','font-weight','font-style','text-decoration','font-size','border','border-color','border-style','border-width','border-top','border-bottom','border-left','border-right','border-collapse'];
 const ALLOWED_ALIGN_VALUES=['left','right','center','justify'];
 
 function sanitizeStyleValue(value){
